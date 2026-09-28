@@ -76,10 +76,30 @@ button, input { font: inherit; }
   color: var(--muted);
 }
 
-.day-switch button.on {
+.day-switch button.on, .chip.on {
   background: var(--gold);
   color: var(--gold-ink);
   font-weight: 700;
+}
+
+.chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 14px 0 4px;
+  scrollbar-width: none;
+}
+
+.chips::-webkit-scrollbar { display: none; }
+
+.chip {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
 }
 
 .banner, .where, .nearby-card {
@@ -377,7 +397,7 @@ button:focus-visible, input:focus-visible {
   border: 0;
 }
 
-.nearby h2, .pick h2 {
+.favorites h2, .nearby h2, .pick h2 {
   margin: 28px 0 0;
   font-size: 1.15rem;
 }
@@ -392,6 +412,13 @@ button:focus-visible, input:focus-visible {
 }
 
 .nearby-card .shot { margin-top: 12px; }
+
+.field-label {
+  display: block;
+  margin: 12px 0 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
 
 .search {
   display: flex;

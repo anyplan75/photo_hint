@@ -29,6 +29,46 @@ export function writeSaved(shots: SavedShot[]): void {
   localStorage.setItem(KEY, JSON.stringify(shots));
 }
 
+const FAVORITES_KEY = 'geuttae-favorites-v1';
+
+export interface FavoritePlace {
+  id: string;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  savedAt: string;
+}
+
+export function loadFavorites(): FavoritePlace[] {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isFavorite);
+  } catch {
+    return [];
+  }
+}
+
+export function writeFavorites(places: FavoritePlace[]): void {
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify(places));
+}
+
+function isFavorite(value: unknown): value is FavoritePlace {
+  if (!value || typeof value !== 'object') return false;
+  const place = value as Partial<FavoritePlace>;
+  return (
+    typeof place.id === 'string' &&
+    typeof place.name === 'string' &&
+    typeof place.address === 'string' &&
+    typeof place.lat === 'number' &&
+    typeof place.lng === 'number' &&
+    typeof place.savedAt === 'string'
+  );
+}
+
 function isSavedShot(value: unknown): value is SavedShot {
   if (!value || typeof value !== 'object') return false;
   const shot = value as Partial<SavedShot>;

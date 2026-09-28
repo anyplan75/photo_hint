@@ -7,7 +7,7 @@ import { askPermission, notifyOnce, readPermission, type NotifyPermission } from
 import { COMPOSITION_LABEL, type WindowKind } from './places';
 import { searchPlaces, type SearchHit } from './search';
 import { getDaySky, moonPhaseName, skyPosition, type DaySky, type SkyPoint } from './sky';
-import { loadSaved, writeSaved, type SavedShot } from './storage';
+import { loadFavorites, loadSaved, writeFavorites, writeSaved, type FavoritePlace, type SavedShot } from './storage';
 import { ALERT_LEAD_MS, dayLabel, formatClock, formatDay, formatRange, formatWhen, seoulDayStart } from './time';
 import { shotWindow, type TimeWindow } from './windows';
 import { SpotMap } from './SpotMap';
@@ -33,6 +33,8 @@ interface Upcoming {
 const BLOCKED_DENIED = '위치 권한을 거부했습니다. 아래 검색이나 지도의 점으로 자리를 정하세요. 다른 명소로 바꾸지 않습니다.';
 const BLOCKED_FAILED = '현재 위치를 가져오지 못했습니다. 아래 검색이나 지도의 점으로 자리를 정하세요. 다른 명소로 바꾸지 않습니다.';
 
+type PlaceView = { kind: 'here' } | { kind: 'favorite'; id: string };
+
 export function App() {
   const [dayOffset, setDayOffset] = useState(0);
   const [fix, setFix] = useState<Fix>({ status: 'asking' });
@@ -43,6 +45,13 @@ export function App() {
   const [searchNote, setSearchNote] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [saved, setSaved] = useState<SavedShot[]>(() => loadSaved());
+  const [favorites, setFavorites] = useState<FavoritePlace[]>(() => loadFavorites());
+  const [view, setView] = useState<PlaceView>({ kind: 'here' });
+  const [favQuery, setFavQuery] = useState('');
+  const [favHits, setFavHits] = useState<SearchHit[]>([]);
+  const [favNote, setFavNote] = useState<string | null>(null);
+  const [favMissing, setFavMissing] = useState(false);
+  const [favBusy, setFavBusy] = useState(false);
   const [permission, setPermission] = useState<NotifyPermission>(() => readPermission());
   const [now, setNow] = useState(() => new Date());
   const requestGen = useRef(0);
@@ -93,30 +102,50 @@ export function App() {
   }, [fix]);
 
   const ready = fix.status === 'ready' ? fix : null;
-  const dayKey = seoulDayStart(0, now).toISOString();
-  const sky = useMemo(
-    () => (ready ? getDaySky(ready.lat, ready.lng, ready.elevationM, dayOffset, now) : null),
-    [ready, dayOffset, dayKey],
-  );
-  const guide = useMemo(() => {
-    if (!ready || !sky) return null;
-    return buildSpotGuide({
-      name: ready.label,
-      kind: 'here',
+  const selectedFavorite = view.kind === 'favorite' ? favorites.find((place) => place.id === view.id) ?? null : null;
+  const active = useMemo(() => {
+    if (selectedFavorite) {
+      return {
+        lat: selectedFavorite.lat,
+        lng: selectedFavorite.lng,
+        elevationM: 0,
+        label: selectedFavorite.name,
+        source: 'favorite' as const,
+      };
+    }
+    if (!ready) return null;
+    return {
       lat: ready.lat,
       lng: ready.lng,
       elevationM: ready.elevationM,
+      label: ready.label,
+      source: ready.source,
+    };
+  }, [selectedFavorite, ready]);
+  const dayKey = seoulDayStart(0, now).toISOString();
+  const sky = useMemo(
+    () => (active ? getDaySky(active.lat, active.lng, active.elevationM, dayOffset, now) : null),
+    [active, dayOffset, dayKey],
+  );
+  const guide = useMemo(() => {
+    if (!active || !sky) return null;
+    return buildSpotGuide({
+      name: active.label,
+      kind: 'here',
+      lat: active.lat,
+      lng: active.lng,
+      elevationM: active.elevationM,
       sky,
       phaseName: moonPhaseName(sky.moonPhaseDegrees),
     });
-  }, [ready, sky]);
+  }, [active, sky]);
   const live = useMemo(() => {
-    if (!ready) return null;
+    if (!active) return null;
     return {
-      sun: skyPosition('sun', now, ready.lat, ready.lng, ready.elevationM),
-      moon: skyPosition('moon', now, ready.lat, ready.lng, ready.elevationM),
+      sun: skyPosition('sun', now, active.lat, active.lng, active.elevationM),
+      moon: skyPosition('moon', now, active.lat, active.lng, active.elevationM),
     };
-  }, [ready, now]);
+  }, [active, now]);
   const nearbyGuides = useMemo(() => {
     if (!ready || nearby.status !== 'ready') return [];
     return nearby.places.map((place) => {
@@ -225,6 +254,72 @@ export function App() {
     setPermission(await askPermission());
   }
 
+  function remember(hit: SearchHit, typed: string) {
+    const place: FavoritePlace = {
+      id: hit.id,
+      name: tabName(hit.label, typed),
+      address: hit.label,
+      lat: hit.lat,
+      lng: hit.lng,
+      savedAt: new Date().toISOString(),
+    };
+    setFavorites((current) => {
+      if (current.some((item) => item.id === place.id)) return current;
+      const next = [...current, place];
+      writeFavorites(next);
+      return next;
+    });
+    setView({ kind: 'favorite', id: place.id });
+    setFavHits([]);
+    setFavQuery('');
+    setFavNote(null);
+    setFavMissing(false);
+  }
+
+  async function addFavoriteAddress() {
+    const text = favQuery.trim();
+    if (text.length < 2) {
+      setFavHits([]);
+      setFavMissing(true);
+      setFavNote('두 글자 이상인 주소를 입력하세요.');
+      return;
+    }
+    setFavBusy(true);
+    setFavMissing(false);
+    setFavNote(null);
+    try {
+      const found = await searchPlaces(text, AbortSignal.timeout(12000));
+      if (found.length === 0) {
+        setFavHits([]);
+        setFavMissing(true);
+        setFavNote('그 주소를 찾지 못했습니다.');
+        return;
+      }
+      if (found.length === 1) {
+        remember(found[0], text);
+        return;
+      }
+      setFavHits(found);
+      setFavMissing(false);
+      setFavNote('여러 곳이 나왔습니다. 저장할 주소를 고르세요.');
+    } catch {
+      setFavHits([]);
+      setFavMissing(true);
+      setFavNote('주소를 확인하지 못했습니다. 다시 시도해 주세요.');
+    } finally {
+      setFavBusy(false);
+    }
+  }
+
+  function removeFavorite(id: string) {
+    setFavorites((current) => {
+      const next = current.filter((place) => place.id !== id);
+      writeFavorites(next);
+      return next;
+    });
+    setView((current) => (current.kind === 'favorite' && current.id === id ? { kind: 'here' } : current));
+  }
+
   const hereLabel = ready ? sourceLabel(ready.source) : '';
 
   return (
@@ -250,10 +345,71 @@ export function App() {
         ))}
       </div>
 
+      <section className="favorites" aria-labelledby="fav-title">
+        <h2 id="fav-title">즐겨찾기</h2>
+        <p className="note">주소를 저장하면 현재 위치 옆에 탭으로 남습니다. 멀리 있어도 됩니다. 계정은 없습니다.</p>
+        <label className="field-label" htmlFor="favorite-address">주소</label>
+        <form
+          className="search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void addFavoriteAddress();
+          }}
+        >
+          <input
+            id="favorite-address"
+            value={favQuery}
+            placeholder="저장할 주소"
+            onChange={(event) => setFavQuery(event.target.value)}
+          />
+          <button type="submit" className="ghost slim">
+            {favBusy ? '찾는 중' : '추가'}
+          </button>
+        </form>
+        {favNote && <p className={favMissing ? 'note error' : 'note'}>{favNote}</p>}
+        {favHits.length > 0 && (
+          <div className="results">
+            {favHits.map((hit) => (
+              <button key={hit.id} type="button" onClick={() => remember(hit, favQuery)}>
+                저장 · {hit.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <div className="chips" role="tablist" aria-label="자리">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view.kind === 'here'}
+          className={view.kind === 'here' ? 'chip on' : 'chip'}
+          onClick={() => setView({ kind: 'here' })}
+        >
+          현재 위치
+        </button>
+        {favorites.map((place) => {
+          const selected = view.kind === 'favorite' && view.id === place.id;
+          return (
+            <button
+              key={place.id}
+              type="button"
+              role="tab"
+              data-favorite-name={place.name}
+              aria-selected={selected}
+              className={selected ? 'chip on' : 'chip'}
+              onClick={() => setView({ kind: 'favorite', id: place.id })}
+            >
+              {place.name}
+            </button>
+          );
+        })}
+      </div>
+
       <section className="where-block" aria-live="polite">
-        {fix.status === 'asking' && <p className="banner">현재 위치를 요청하고 있습니다.</p>}
-        {fix.status === 'blocked' && <p className="banner">{fix.message}</p>}
-        {ready && (
+        {view.kind === 'here' && fix.status === 'asking' && <p className="banner">현재 위치를 요청하고 있습니다.</p>}
+        {view.kind === 'here' && fix.status === 'blocked' && <p className="banner">{fix.message}</p>}
+        {view.kind === 'here' && ready && (
           <div className="where">
             <p className="where-kicker">{hereLabel}</p>
             <h2>{ready.label}</h2>
@@ -263,9 +419,20 @@ export function App() {
             </button>
           </div>
         )}
+        {selectedFavorite && (
+          <div className="where" data-view="favorite">
+            <p className="where-kicker">즐겨찾기</p>
+            <h2>{selectedFavorite.name}</h2>
+            <p>{selectedFavorite.address}</p>
+            <p>{formatCoord(selectedFavorite.lat, selectedFavorite.lng)}</p>
+            <button type="button" className="text-btn" onClick={() => removeFavorite(selectedFavorite.id)}>
+              즐겨찾기에서 빼기
+            </button>
+          </div>
+        )}
       </section>
 
-      {ready && sky && guide && live && (
+      {active && sky && guide && live && (
         <SkyBlock
           sky={sky}
           guide={guide}
@@ -274,7 +441,7 @@ export function App() {
           now={now}
           saved={saved}
           onToggle={toggleSave}
-          place={{ name: ready.label, lat: ready.lat, lng: ready.lng, elevationM: ready.elevationM }}
+          place={{ name: active.label, lat: active.lat, lng: active.lng, elevationM: active.elevationM }}
         />
       )}
 
@@ -640,7 +807,14 @@ function formatCoord(lat: number, lng: number): string {
   return `${ns} ${Math.abs(lat).toFixed(4)} · ${ew} ${Math.abs(lng).toFixed(4)}`;
 }
 
-function sourceLabel(source: 'gps' | 'search' | 'map'): string {
+function tabName(display: string, typed: string): string {
+  const fromResult = shortLabel(display);
+  if (fromResult && !/^\d+$/.test(fromResult)) return fromResult;
+  const compact = typed.trim();
+  return compact.length > 18 ? `${compact.slice(0, 18)}…` : compact;
+}
+
+function sourceLabel(source: 'gps' | 'search' | 'map' | 'favorite'): string {
   if (source === 'gps') return '지금 있는 좌표';
   if (source === 'search') return '검색으로 고른 좌표';
   return '지도에서 찍은 좌표';
