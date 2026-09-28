@@ -171,7 +171,7 @@ export function App() {
         </div>
         <p className="phase">
           달의 위상 <strong>{moonPhaseName(sky.moonPhaseDegrees)}</strong>
-          <span>밝기 {Math.round(sky.moonLitFraction * 100)}%</span>
+          <span>· 밝기 {Math.round(sky.moonLitFraction * 100)}%</span>
         </p>
         <p className="live">
           지금 해 방위 {Math.round(live.sun.azimuth)}° · 고도 {live.sun.altitude.toFixed(1)}°
