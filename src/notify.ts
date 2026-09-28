@@ -16,7 +16,7 @@ export async function askPermission(): Promise<NotifyPermission> {
 export async function registerWorker(): Promise<void> {
   if (!('serviceWorker' in navigator)) return;
   try {
-    await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`);
   } catch {
     // Notification still falls back to the page constructor.
   }
