@@ -1,0 +1,25 @@
+{
+  "name": "그때 그자리",
+  "short_name": "그때 그자리",
+  "description": "그 장소와 그 시각에만 되는 사진을 골라 주고, 시간 창이 다가오면 알려 줍니다.",
+  "start_url": "/photo_hint/",
+  "scope": "/photo_hint/",
+  "display": "standalone",
+  "background_color": "#10141c",
+  "theme_color": "#10141c",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "/photo_hint/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/photo_hint/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

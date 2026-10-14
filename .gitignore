@@ -3,3 +3,7 @@ dist
 .DS_Store
 *.local
 .vite
+ios/App/Pods/
+ios/App/build/
+ios/DerivedData/
+*.xcuserstate

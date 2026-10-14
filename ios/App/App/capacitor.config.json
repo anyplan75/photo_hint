@@ -1,0 +1,10 @@
+{
+	"appId": "com.anyplan75.geuttae",
+	"appName": "그때 그자리",
+	"webDir": "dist",
+	"ios": {
+		"contentInset": "automatic",
+		"backgroundColor": "#10141c"
+	},
+	"packageClassList": []
+}
