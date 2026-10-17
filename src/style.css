@@ -267,9 +267,38 @@ button, input { font: inherit; }
   border-top: 1px solid rgba(34, 30, 24, 0.14);
 }
 
+.spot-list li.on {
+  background: rgba(230, 177, 90, 0.16);
+  margin: 0 -8px;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: 12px;
+}
+
+.spot-pick {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .spot-list strong {
   display: block;
   font-size: 1.05rem;
+}
+
+.spot-pick span {
+  flex: 0 0 auto;
+  color: #8a5a12;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .shot .spot-list p {

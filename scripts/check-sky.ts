@@ -117,8 +117,11 @@ assert(!('error' in street) && street.source === '1x', '1x street page is an all
 assert(sourceOf(new URL('https://example.com/photo')) === null, 'other sites are refused');
 assert('error' in parseReferenceAddress('https://example.com/photo'), 'pasted foreign pages are refused');
 const fields = pickSpots('들판', JEJU_SPOTS, 260);
-assert(fields[0]?.name === '성실농원', 'a rural scene uses the named Jeju farmland');
-assert(fields.some((spot) => spot.name === '엉또농원'), 'the other named farmland stays available');
+assert(fields.length >= 8, 'a short scene list is filled out to at least eight places');
+assert(fields[0]?.name === '성실농원' && fields[0].matchesScene, 'a rural scene uses the named Jeju farmland');
+assert(fields.some((spot) => spot.name === '엉또농원' && spot.matchesScene), 'the other named farmland stays available');
+assert(fields.some((spot) => !spot.matchesScene), 'other real places fill the list');
+assert(fields.every((spot) => typeof spot.address === 'string' && spot.address.length > 0), 'each listed place has an address');
 assert(pickSpots('바다', JEJU_SPOTS, 260)[0]?.name === '협재 해수욕장', 'sunset aims at the west-facing beach');
 assert(pickSpots('들판', [], 260).length === 0, 'a region without places stays empty');
 assert(whySpot('들판', fields[0]).includes('성실농원'), 'the reason names the real place');

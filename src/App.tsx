@@ -5,6 +5,7 @@ import {
   FALLBACK_SCENES,
   isJeju,
   loadSpotsAround,
+  matchLabel,
   pickSpots,
   spotCounts,
   spotsForRegion,
@@ -344,7 +345,9 @@ function PlaceAdvice({
   onChoose: (scene: SceneChoice) => void;
 }) {
   const windowKind = scene ? windowForScene(scene, brief.window) : brief.window;
-  const chosen = scene ? pickSpots(scene, spots, aimFor(windowKind)).slice(0, 3) : [];
+  const chosen = scene ? pickSpots(scene, spots, aimFor(windowKind)) : [];
+  const [selected, setSelected] = useState(chosen[0]?.osm ?? '');
+  const active = chosen.some((spot) => spot.osm === selected) ? selected : chosen[0]?.osm;
   return (
     <div className="method" data-method>
       <h4>장면</h4>
@@ -367,14 +370,18 @@ function PlaceAdvice({
       <h4>장소</h4>
       {waiting && <p>이 지역의 장소를 찾는 중입니다.</p>}
       {!waiting && missing && <p data-place-missing>이 지역의 장소 자료를 찾지 못했습니다.</p>}
-      {!waiting && !missing && scene && chosen.length === 0 && (
+      {!waiting && !missing && scene && spots.length === 0 && (
         <p data-place-missing>이 장면에 맞는 장소 자료를 찾지 못했습니다.</p>
       )}
       {chosen.length > 0 && (
         <ul className="spot-list">
           {chosen.map((spot) => (
-            <li key={spot.osm}>
-              <strong data-place>{spot.name}</strong>
+            <li key={spot.osm} className={active === spot.osm ? 'on' : ''}>
+              <button type="button" className="spot-pick" aria-pressed={active === spot.osm} onClick={() => setSelected(spot.osm)}>
+                <strong data-place>{spot.name}</strong>
+                <span data-match>{matchLabel(scene as SceneChoice, spot)}</span>
+              </button>
+              <p data-address>{spot.address ?? '주소를 찾지 못했습니다.'}</p>
               <p data-why>{whySpot(scene as SceneChoice, spot)}</p>
               <p data-time>{recommendTime(spot.lat, spot.lng, windowKind, now)}</p>
               <p className="dim">
