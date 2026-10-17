@@ -1,7 +1,7 @@
 {
   "name": "그때 그자리",
   "short_name": "그때 그자리",
-  "description": "그 장소와 그 시각에만 되는 사진을 골라 주고, 시간 창이 다가오면 알려 줍니다.",
+  "description": "지역을 정하면, 시도해 볼 사진과 그 자리·시간을 골라 줍니다.",
   "start_url": "/photo_hint/",
   "scope": "/photo_hint/",
   "display": "standalone",

@@ -1,3 +1,4 @@
+import type { SourceId } from './sources';
 import type { WindowKind } from './places';
 
 const KEY = 'geuttae-saved-shots-v2';
@@ -67,6 +68,74 @@ function isFavorite(value: unknown): value is FavoritePlace {
     typeof place.lng === 'number' &&
     typeof place.savedAt === 'string'
   );
+}
+
+const REGION_KEY = 'geuttae-region-v1';
+
+export interface StoredRegion {
+  name: string;
+  label: string;
+  lat: number | null;
+  lng: number | null;
+  savedAt: string;
+}
+
+export function loadRegion(): StoredRegion | null {
+  try {
+    const raw = localStorage.getItem(REGION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    return isRegion(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeRegion(region: StoredRegion): void {
+  localStorage.setItem(REGION_KEY, JSON.stringify(region));
+}
+
+const REFERENCES_KEY = 'geuttae-references-v1';
+
+export interface StoredReference {
+  id: string;
+  url: string;
+  source: SourceId;
+  addedAt: string;
+}
+
+export function loadReferences(): StoredReference[] {
+  try {
+    const raw = localStorage.getItem(REFERENCES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isReference);
+  } catch {
+    return [];
+  }
+}
+
+export function writeReferences(items: StoredReference[]): void {
+  localStorage.setItem(REFERENCES_KEY, JSON.stringify(items));
+}
+
+function isRegion(value: unknown): value is StoredRegion {
+  if (!value || typeof value !== 'object') return false;
+  const region = value as Partial<StoredRegion>;
+  return (
+    typeof region.name === 'string' &&
+    typeof region.label === 'string' &&
+    (typeof region.lat === 'number' || region.lat === null) &&
+    (typeof region.lng === 'number' || region.lng === null) &&
+    typeof region.savedAt === 'string'
+  );
+}
+
+function isReference(value: unknown): value is StoredReference {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Partial<StoredReference>;
+  return typeof item.id === 'string' && typeof item.url === 'string' && typeof item.source === 'string' && typeof item.addedAt === 'string';
 }
 
 function isSavedShot(value: unknown): value is SavedShot {

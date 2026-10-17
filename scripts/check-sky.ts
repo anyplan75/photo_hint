@@ -1,8 +1,11 @@
+import { WEEKLY_PICKS, weeklyPick } from '../src/catalog';
 import { distanceMeters } from '../src/geo';
 import { buildSpotGuide, formatPosition } from '../src/ideas';
 import { selectNearby } from '../src/nearby';
+import { parseReferenceAddress, sourceOf } from '../src/sources';
 import { getDaySky, moonPhaseName, skyPosition } from '../src/sky';
 import { formatClock } from '../src/time';
+import { formatSelection, seoulSundayNine } from '../src/week';
 
 const here = { name: '현재 위치', lat: 35.1631, lng: 129.1635, elevationM: 5 };
 let failed = false;
@@ -98,6 +101,20 @@ const crowded = selectNearby(here.lat, here.lng, [
   { type: 'node', id: 200, lat: here.lat + 0.03, lon: here.lng, tags: { name: '먼 전망', tourism: 'viewpoint' } },
 ]);
 assert(crowded.some((place) => place.name === '먼 전망'), 'a viewpoint within 5km is not hidden by closer roads');
+
+assert(WEEKLY_PICKS.length >= 4, 'at least four weekly picks');
+const weekIds = new Set(WEEKLY_PICKS.map((pick) => pick.id));
+assert(weekIds.size === WEEKLY_PICKS.length, 'weekly picks are unique');
+assert(WEEKLY_PICKS.every((pick) => pick.url.startsWith('https://')), 'weekly links are https');
+const during = new Date('2026-10-17T14:00:00.000Z');
+assert(seoulSundayNine(during).toISOString() === '2026-10-11T00:00:00.000Z', 'saturday evening still belongs to the previous Sunday 09:00');
+assert(weeklyPick(during).id === 'rural-quiet', 'mid-October pick is the rural page');
+assert(formatSelection(weeklyPick(during).startsAt) === '10월 11일 일요일 09:00 선정', 'selection label is Sunday 09:00 in Seoul');
+assert(weeklyPick(new Date('2026-10-18T00:00:00.000Z')).id === 'autumn-leaves', 'next Sunday switches the pick');
+const street = parseReferenceAddress('https://1x.com/gallery/street');
+assert(!('error' in street) && street.source === '1x', '1x street page is an allowed source');
+assert(sourceOf(new URL('https://example.com/photo')) === null, 'other sites are refused');
+assert('error' in parseReferenceAddress('https://example.com/photo'), 'pasted foreign pages are refused');
 
 if (failed) {
   console.error('\nsky check failed');

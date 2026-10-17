@@ -311,7 +311,8 @@ button, input { font: inherit; }
 
 .shot-kicker { color: #8a5a12; }
 
-.shot h3 { margin-top: 2px; font-size: 1.35rem; }
+.shot h2, .shot h3 { margin-top: 2px; font-size: 1.35rem; letter-spacing: -0.03em; }
+.shot a { color: #6d4710; font-weight: 700; word-break: break-all; }
 
 .summary { margin-top: 6px; }
 

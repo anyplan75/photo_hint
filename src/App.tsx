@@ -1,868 +1,249 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { FrameSketch } from './FrameSketch';
-import { buildSpotGuide, formatPosition, positionOn, type ShootIdea, type SpotGuide } from './ideas';
-import { bearingDegrees, formatDistance } from './geo';
-import { KIND_LABEL, loadNearby, type NearbyPlace } from './nearby';
-import { askPermission, notifyOnce, readPermission, type NotifyPermission } from './notify';
-import { COMPOSITION_LABEL, type WindowKind } from './places';
-import { searchPlaces, type SearchHit } from './search';
-import { getDaySky, moonPhaseName, skyPosition, type DaySky, type SkyPoint } from './sky';
-import { loadFavorites, loadSaved, writeFavorites, writeSaved, type FavoritePlace, type SavedShot } from './storage';
-import { ALERT_LEAD_MS, dayLabel, formatClock, formatDay, formatRange, formatWhen, seoulDayStart } from './time';
-import { shotWindow, type TimeWindow } from './windows';
-import { SpotMap } from './SpotMap';
-
-type Fix =
-  | { status: 'asking' }
-  | { status: 'blocked'; message: string }
-  | { status: 'ready'; lat: number; lng: number; elevationM: number; source: 'gps' | 'search' | 'map'; label: string };
-
-type NearbyState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'error' }
-  | { status: 'ready'; places: NearbyPlace[] };
-
-interface Upcoming {
-  saved: SavedShot;
-  window: TimeWindow;
-  dayOffset: number;
-  phase: 'scheduled' | 'approaching' | 'open';
-}
-
-const BLOCKED_DENIED = '위치 권한을 거부했습니다. 아래 검색이나 지도의 점으로 자리를 정하세요. 다른 명소로 바꾸지 않습니다.';
-const BLOCKED_FAILED = '현재 위치를 가져오지 못했습니다. 아래 검색이나 지도의 점으로 자리를 정하세요. 다른 명소로 바꾸지 않습니다.';
-
-type PlaceView = { kind: 'here' } | { kind: 'favorite'; id: string };
+import { useMemo, useState, type FormEvent } from 'react';
+import { describeAdded, fillRegion, weeklyPick, type ReferenceCopy } from './catalog';
+import { recommendTime, windowName } from './recommend';
+import { searchPlaces } from './search';
+import { SOURCE_NAME, parseReferenceAddress, referenceKey } from './sources';
+import { loadReferences, loadRegion, writeReferences, writeRegion, type StoredReference, type StoredRegion } from './storage';
+import { formatSelection } from './week';
 
 export function App() {
-  const [dayOffset, setDayOffset] = useState(0);
-  const [fix, setFix] = useState<Fix>({ status: 'asking' });
-  const [locateNonce, setLocateNonce] = useState(0);
-  const [nearby, setNearby] = useState<NearbyState>({ status: 'idle' });
-  const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<SearchHit[]>([]);
-  const [searchNote, setSearchNote] = useState<string | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [saved, setSaved] = useState<SavedShot[]>(() => loadSaved());
-  const [favorites, setFavorites] = useState<FavoritePlace[]>(() => loadFavorites());
-  const [view, setView] = useState<PlaceView>({ kind: 'here' });
-  const [favQuery, setFavQuery] = useState('');
-  const [favHits, setFavHits] = useState<SearchHit[]>([]);
-  const [favNote, setFavNote] = useState<string | null>(null);
-  const [favMissing, setFavMissing] = useState(false);
-  const [favBusy, setFavBusy] = useState(false);
-  const [permission, setPermission] = useState<NotifyPermission>(() => readPermission());
-  const [now, setNow] = useState(() => new Date());
-  const requestGen = useRef(0);
+  const [now] = useState(() => new Date());
+  const [region, setRegion] = useState<StoredRegion | null>(() => loadRegion());
+  const [regionDraft, setRegionDraft] = useState('');
+  const [regionError, setRegionError] = useState<string | null>(null);
+  const [finding, setFinding] = useState(false);
+  const [references, setReferences] = useState<StoredReference[]>(() => loadReferences());
+  const [urlDraft, setUrlDraft] = useState('');
+  const [urlError, setUrlError] = useState<string | null>(null);
+  const pick = useMemo(() => weeklyPick(now), [now]);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 15000);
-    const onVisible = () => {
-      setNow(new Date());
-      setPermission(readPermission());
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, []);
-
-  useEffect(() => {
-    const gen = ++requestGen.current;
-    locate(gen);
-    return () => {
-      requestGen.current += 1;
-    };
-  }, [locateNonce]);
-
-  useEffect(() => {
-    if (fix.status !== 'ready') {
-      setNearby({ status: 'idle' });
+  async function saveRegion(event: FormEvent) {
+    event.preventDefault();
+    const name = regionDraft.trim();
+    if (!name) {
+      setRegionError('지역 이름을 입력하세요.');
       return;
     }
+    setFinding(true);
+    setRegionError(null);
     const controller = new AbortController();
-    let cancelled = false;
-    const timer = window.setTimeout(() => controller.abort(), 40000);
-    setNearby({ status: 'loading' });
-    loadNearby(fix.lat, fix.lng, controller.signal)
-      .then((places) => {
-        if (!cancelled) setNearby({ status: 'ready', places });
-      })
-      .catch(() => {
-        if (!cancelled) setNearby({ status: 'error' });
-      })
-      .finally(() => window.clearTimeout(timer));
-    return () => {
-      cancelled = true;
-      controller.abort();
-      window.clearTimeout(timer);
-    };
-  }, [fix]);
-
-  const ready = fix.status === 'ready' ? fix : null;
-  const selectedFavorite = view.kind === 'favorite' ? favorites.find((place) => place.id === view.id) ?? null : null;
-  const active = useMemo(() => {
-    if (selectedFavorite) {
-      return {
-        lat: selectedFavorite.lat,
-        lng: selectedFavorite.lng,
-        elevationM: 0,
-        label: selectedFavorite.name,
-        source: 'favorite' as const,
-      };
-    }
-    if (!ready) return null;
-    return {
-      lat: ready.lat,
-      lng: ready.lng,
-      elevationM: ready.elevationM,
-      label: ready.label,
-      source: ready.source,
-    };
-  }, [selectedFavorite, ready]);
-  const dayKey = seoulDayStart(0, now).toISOString();
-  const sky = useMemo(
-    () => (active ? getDaySky(active.lat, active.lng, active.elevationM, dayOffset, now) : null),
-    [active, dayOffset, dayKey],
-  );
-  const guide = useMemo(() => {
-    if (!active || !sky) return null;
-    return buildSpotGuide({
-      name: active.label,
-      kind: 'here',
-      lat: active.lat,
-      lng: active.lng,
-      elevationM: active.elevationM,
-      sky,
-      phaseName: moonPhaseName(sky.moonPhaseDegrees),
-    });
-  }, [active, sky]);
-  const live = useMemo(() => {
-    if (!active) return null;
-    return {
-      sun: skyPosition('sun', now, active.lat, active.lng, active.elevationM),
-      moon: skyPosition('moon', now, active.lat, active.lng, active.elevationM),
-    };
-  }, [active, now]);
-  const nearbyGuides = useMemo(() => {
-    if (!ready || nearby.status !== 'ready') return [];
-    return nearby.places.map((place) => {
-      const placeSky = getDaySky(place.lat, place.lng, place.elevationM, dayOffset, now);
-      return {
-        place,
-        bearing: bearingDegrees(ready.lat, ready.lng, place.lat, place.lng),
-        guide: buildSpotGuide({
-          name: place.name,
-          kind: place.kind,
-          lat: place.lat,
-          lng: place.lng,
-          elevationM: place.elevationM,
-          sky: placeSky,
-          phaseName: moonPhaseName(placeSky.moonPhaseDegrees),
-        }),
-      };
-    });
-  }, [ready, nearby, dayOffset, dayKey]);
-
-  const upcoming = useMemo(
-    () => saved.map((item) => upcomingFor(item, now)).filter((item): item is Upcoming => item !== null),
-    [saved, now],
-  );
-
-  useEffect(() => {
-    for (const item of upcoming) {
-      if (item.phase !== 'approaching') continue;
-      const key = `${item.saved.id}:${item.window.start.toISOString()}`;
-      void notifyOnce(
-        key,
-        '그때 그자리',
-        `${item.saved.name} · ${item.saved.title} 창이 30분 안에 시작됩니다. ${formatRange(item.window.start, item.window.end)}`,
-      );
-    }
-  }, [upcoming]);
-
-  function locate(gen: number) {
-    if (!navigator.geolocation) {
-      setFix({ status: 'blocked', message: BLOCKED_FAILED });
-      return;
-    }
-    setFix({ status: 'asking' });
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        if (requestGen.current !== gen) return;
-        setFix({
-          status: 'ready',
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-          elevationM: Number.isFinite(position.coords.altitude) ? position.coords.altitude ?? 0 : 0,
-          source: 'gps',
-          label: '현재 위치',
-        });
-      },
-      (error) => {
-        if (requestGen.current !== gen) return;
-        const denied = error.code === error.PERMISSION_DENIED;
-        setFix({ status: 'blocked', message: denied ? BLOCKED_DENIED : BLOCKED_FAILED });
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
-    );
-  }
-
-  function pin(next: Extract<Fix, { status: 'ready' }>) {
-    requestGen.current += 1;
-    setHits([]);
-    setSearchNote(null);
-    setFix(next);
-  }
-
-  async function runSearch() {
-    const text = query.trim();
-    if (text.length < 2) {
-      setSearchNote('두 글자 이상 입력하세요.');
-      setHits([]);
-      return;
-    }
-    setSearching(true);
-    setSearchNote(null);
     try {
-      const found = await searchPlaces(text, AbortSignal.timeout(12000));
-      setHits(found);
-      setSearchNote(found.length === 0 ? '검색 결과가 없습니다. 지도에서 점을 찍을 수 있습니다.' : null);
+      const hits = await searchPlaces(name, controller.signal);
+      const hit = hits[0];
+      const next: StoredRegion = {
+        name,
+        label: hit?.label ?? '',
+        lat: hit?.lat ?? null,
+        lng: hit?.lng ?? null,
+        savedAt: new Date().toISOString(),
+      };
+      writeRegion(next);
+      setRegion(next);
+      setRegionDraft('');
+      if (!hit) setRegionError('그 지역을 찾지 못했습니다. 이름은 저장했고, 시계 시각은 빠집니다.');
     } catch {
-      setHits([]);
-      setSearchNote('검색에 실패했습니다. 지도에서 점을 찍을 수 있습니다.');
+      setRegionError('지역을 찾지 못했습니다. 잠시 뒤 다시 시도하세요.');
     } finally {
-      setSearching(false);
+      setFinding(false);
     }
   }
 
-  function toggleSave(shot: SavedShot) {
-    setSaved((current) => {
-      const exists = current.some((item) => item.id === shot.id);
-      const next = exists ? current.filter((item) => item.id !== shot.id) : [...current, shot];
-      writeSaved(next);
-      if (!exists) {
-        window.setTimeout(() => document.getElementById('saved')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-      }
-      return next;
-    });
-  }
-
-  async function enableAlerts() {
-    setPermission(await askPermission());
-  }
-
-  function remember(hit: SearchHit, typed: string) {
-    const place: FavoritePlace = {
-      id: hit.id,
-      name: tabName(hit.label, typed),
-      address: hit.label,
-      lat: hit.lat,
-      lng: hit.lng,
-      savedAt: new Date().toISOString(),
-    };
-    setFavorites((current) => {
-      if (current.some((item) => item.id === place.id)) return current;
-      const next = [...current, place];
-      writeFavorites(next);
-      return next;
-    });
-    setView({ kind: 'favorite', id: place.id });
-    setFavHits([]);
-    setFavQuery('');
-    setFavNote(null);
-    setFavMissing(false);
-  }
-
-  async function addFavoriteAddress() {
-    const text = favQuery.trim();
-    if (text.length < 2) {
-      setFavHits([]);
-      setFavMissing(true);
-      setFavNote('두 글자 이상인 주소를 입력하세요.');
+  function addReference(event: FormEvent) {
+    event.preventDefault();
+    const parsed = parseReferenceAddress(urlDraft);
+    if ('error' in parsed) {
+      setUrlError(parsed.error);
       return;
     }
-    setFavBusy(true);
-    setFavMissing(false);
-    setFavNote(null);
-    try {
-      const found = await searchPlaces(text, AbortSignal.timeout(12000));
-      if (found.length === 0) {
-        setFavHits([]);
-        setFavMissing(true);
-        setFavNote('그 주소를 찾지 못했습니다.');
-        return;
-      }
-      if (found.length === 1) {
-        remember(found[0], text);
-        return;
-      }
-      setFavHits(found);
-      setFavMissing(false);
-      setFavNote('여러 곳이 나왔습니다. 저장할 주소를 고르세요.');
-    } catch {
-      setFavHits([]);
-      setFavMissing(true);
-      setFavNote('주소를 확인하지 못했습니다. 다시 시도해 주세요.');
-    } finally {
-      setFavBusy(false);
+    if (references.some((item) => referenceKey(item.url) === referenceKey(parsed.url))) {
+      setUrlError('이미 넣어 둔 페이지입니다.');
+      return;
     }
+    const next = [
+      { id: referenceKey(parsed.url), url: parsed.url, source: parsed.source, addedAt: new Date().toISOString() },
+      ...references,
+    ];
+    writeReferences(next);
+    setReferences(next);
+    setUrlDraft('');
+    setUrlError(null);
   }
 
-  function removeFavorite(id: string) {
-    setFavorites((current) => {
-      const next = current.filter((place) => place.id !== id);
-      writeFavorites(next);
-      return next;
-    });
-    setView((current) => (current.kind === 'favorite' && current.id === id ? { kind: 'here' } : current));
+  function removeReference(id: string) {
+    const next = references.filter((item) => item.id !== id);
+    writeReferences(next);
+    setReferences(next);
   }
-
-  const hereLabel = ready ? sourceLabel(ready.source) : '';
 
   return (
     <main className="app">
       <header className="mast">
-        <p className="mark">사진 시각</p>
+        <p className="mark">촬영 참고</p>
         <h1>그때 그자리</h1>
-        <p className="lede">지금 이 좌표에서 되는 빛과 구도.</p>
+        <p className="lede">지역을 정하면, 시도해 볼 사진과 그 자리·시간을 골라 줍니다.</p>
       </header>
 
-      <div className="day-switch" role="tablist" aria-label="날짜">
-        {[0, 1].map((offset) => (
-          <button
-            key={offset}
-            type="button"
-            role="tab"
-            aria-selected={dayOffset === offset}
-            className={dayOffset === offset ? 'on' : ''}
-            onClick={() => setDayOffset(offset)}
-          >
-            {offset === 0 ? '오늘' : '내일'}
-          </button>
-        ))}
-      </div>
-
-      <section className="favorites" aria-labelledby="fav-title">
-        <h2 id="fav-title">즐겨찾기</h2>
-        <p className="note">주소를 저장하면 현재 위치 옆에 탭으로 남습니다. 멀리 있어도 됩니다. 계정은 없습니다.</p>
-        <label className="field-label" htmlFor="favorite-address">주소</label>
-        <form
-          className="search"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void addFavoriteAddress();
-          }}
-        >
-          <input
-            id="favorite-address"
-            value={favQuery}
-            placeholder="저장할 주소"
-            onChange={(event) => setFavQuery(event.target.value)}
-          />
-          <button type="submit" className="ghost slim">
-            {favBusy ? '찾는 중' : '추가'}
-          </button>
-        </form>
-        {favNote && <p className={favMissing ? 'note error' : 'note'}>{favNote}</p>}
-        {favHits.length > 0 && (
-          <div className="results">
-            {favHits.map((hit) => (
-              <button key={hit.id} type="button" onClick={() => remember(hit, favQuery)}>
-                저장 · {hit.label}
-              </button>
-            ))}
-          </div>
+      <section className="panel" aria-labelledby="region-title">
+        <div className="panel-head">
+          <h2 id="region-title">지역</h2>
+          <p>브라우저에만 남습니다. 계정은 없습니다.</p>
+        </div>
+        {region && (
+          <p className="where-kicker" data-region={region.name}>
+            {region.name}
+            {region.label ? ` · ${shortLabel(region.label)}` : ''}
+          </p>
         )}
-      </section>
-
-      <div className="chips" role="tablist" aria-label="자리">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={view.kind === 'here'}
-          className={view.kind === 'here' ? 'chip on' : 'chip'}
-          onClick={() => setView({ kind: 'here' })}
-        >
-          현재 위치
-        </button>
-        {favorites.map((place) => {
-          const selected = view.kind === 'favorite' && view.id === place.id;
-          return (
-            <button
-              key={place.id}
-              type="button"
-              role="tab"
-              data-favorite-name={place.name}
-              aria-selected={selected}
-              className={selected ? 'chip on' : 'chip'}
-              onClick={() => setView({ kind: 'favorite', id: place.id })}
-            >
-              {place.name}
-            </button>
-          );
-        })}
-      </div>
-
-      <section className="where-block" aria-live="polite">
-        {view.kind === 'here' && fix.status === 'asking' && <p className="banner">현재 위치를 요청하고 있습니다.</p>}
-        {view.kind === 'here' && fix.status === 'blocked' && <p className="banner">{fix.message}</p>}
-        {view.kind === 'here' && ready && (
-          <div className="where">
-            <p className="where-kicker">{hereLabel}</p>
-            <h2>{ready.label}</h2>
-            <p>{formatCoord(ready.lat, ready.lng)}</p>
-            <button type="button" className="text-btn" onClick={() => setLocateNonce((value) => value + 1)}>
-              위치 다시 묻기
-            </button>
-          </div>
-        )}
-        {selectedFavorite && (
-          <div className="where" data-view="favorite">
-            <p className="where-kicker">즐겨찾기</p>
-            <h2>{selectedFavorite.name}</h2>
-            <p>{selectedFavorite.address}</p>
-            <p>{formatCoord(selectedFavorite.lat, selectedFavorite.lng)}</p>
-            <button type="button" className="text-btn" onClick={() => removeFavorite(selectedFavorite.id)}>
-              즐겨찾기에서 빼기
-            </button>
-          </div>
-        )}
-      </section>
-
-      {active && sky && guide && live && (
-        <SkyBlock
-          sky={sky}
-          guide={guide}
-          live={live}
-          dayOffset={dayOffset}
-          now={now}
-          saved={saved}
-          onToggle={toggleSave}
-          place={{ name: active.label, lat: active.lat, lng: active.lng, elevationM: active.elevationM }}
-        />
-      )}
-
-      {ready && (
-        <section className="nearby" aria-labelledby="nearby-title">
-          <h2 id="nearby-title">5km 안의 촬영 장소</h2>
-          <p className="note">지금 좌표에서 가까운 전망, 공원, 호수, 다리, 봉우리만 불러옵니다.</p>
-          {nearby.status === 'loading' && <p className="note">주변 장소를 불러오는 중</p>}
-          {nearby.status === 'error' && (
-            <p className="note warn">주변 장소를 불러오지 못했습니다. 이 좌표의 하늘은 위에 그대로 있습니다.</p>
-          )}
-          {nearby.status === 'ready' && nearby.places.length === 0 && (
-            <p className="note">5km 안에 이름 있는 전망, 공원, 호수, 다리, 봉우리가 없습니다. 이 좌표의 하늘은 위에 그대로 있습니다.</p>
-          )}
-          {nearbyGuides.map(({ place, bearing, guide: placeGuide }) => (
-            <article key={place.id} className="nearby-card" data-nearby-name={place.name}>
-              <p className="shot-kicker">
-                {KIND_LABEL[place.kind]} · {formatDistance(place.distanceM)} · {compassFrom(bearing)}
-              </p>
-              <h3>{place.name}</h3>
-              <p className="summary">{placeGuide.dayLine}</p>
-              <p className="summary">{placeGuide.moon.summary}</p>
-              <TrackList track={placeGuide.track} />
-              <div className="ideas">
-                {placeGuide.ideas.map((item) => (
-                  <IdeaCard
-                    key={item.id}
-                    idea={item}
-                    sky={getDaySky(place.lat, place.lng, place.elevationM, dayOffset, now)}
-                    dayOffset={dayOffset}
-                    saved={saved.some((shot) => shot.id === item.id)}
-                    onToggle={() =>
-                      toggleSave({
-                        id: item.id,
-                        name: place.name,
-                        lat: place.lat,
-                        lng: place.lng,
-                        elevationM: place.elevationM,
-                        title: item.title,
-                        window: item.window,
-                        savedAt: new Date().toISOString(),
-                      })
-                    }
-                  />
-                ))}
-              </div>
-            </article>
-          ))}
-        </section>
-      )}
-
-      <section className="pick" aria-labelledby="pick-title">
-        <h2 id="pick-title">다른 좌표</h2>
-        <p className="note">검색하거나 지도를 눌러 점을 찍습니다. 점을 찍기 전에는 그 자리를 계산하지 않습니다.</p>
-        <form
-          className="search"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void runSearch();
-          }}
-        >
-          <label className="sr" htmlFor="place-search">
-            자리 검색
+        <form className="search" id="region-form" onSubmit={saveRegion}>
+          <label className="sr" htmlFor="region-name">
+            지역 이름
           </label>
           <input
-            id="place-search"
-            value={query}
-            placeholder="동네, 공원, 주소"
-            onChange={(event) => setQuery(event.target.value)}
+            id="region-name"
+            name="region"
+            value={regionDraft}
+            placeholder="예: 부산 해운대"
+            onChange={(event) => setRegionDraft(event.target.value)}
+            autoComplete="off"
           />
-          <button type="submit" className="ghost slim">
-            {searching ? '찾는 중' : '검색'}
+          <button className="ghost slim" type="submit" disabled={finding}>
+            {finding ? '찾는 중' : region ? '바꾸기' : '이 지역으로'}
           </button>
         </form>
-        {searchNote && <p className="note">{searchNote}</p>}
-        {hits.length > 0 && (
-          <div className="results">
-            {hits.map((hit) => (
-              <button
-                key={hit.id}
-                type="button"
-                onClick={() =>
-                  pin({
-                    status: 'ready',
-                    lat: hit.lat,
-                    lng: hit.lng,
-                    elevationM: 0,
-                    source: 'search',
-                    label: shortLabel(hit.label),
-                  })
-                }
-              >
-                {hit.label}
+        {regionError && <p className="note error">{regionError}</p>}
+      </section>
+
+      {region ? (
+        <>
+          <WeeklyCard pick={pick} region={region} now={now} />
+          <section className="favorites" aria-labelledby="add-title">
+            <h2 id="add-title">페이지 주소로 추가</h2>
+            <p className="day-line">1x, 1650Gallery, LensCulture, World Press Photo, 레드불 일루미네이트, 레드불 콘텐츠 풀.</p>
+            <form className="search" id="reference-form" onSubmit={addReference}>
+              <label className="sr" htmlFor="reference-url">
+                페이지 주소
+              </label>
+              <input
+                id="reference-url"
+                name="url"
+                inputMode="url"
+                value={urlDraft}
+                placeholder="페이지 주소를 붙여 넣기"
+                onChange={(event) => setUrlDraft(event.target.value)}
+                autoComplete="off"
+              />
+              <button className="ghost slim" type="submit">
+                추가
               </button>
+            </form>
+            {urlError && <p className="note error">{urlError}</p>}
+            {references.map((item) => (
+              <ReferenceCard
+                key={item.id}
+                copy={describeAdded(item.url, item.source)}
+                region={region}
+                now={now}
+                onRemove={() => removeReference(item.id)}
+              />
             ))}
-          </div>
-        )}
-        <SpotMap
-          lat={ready?.lat ?? null}
-          lng={ready?.lng ?? null}
-          onPick={(lat, lng) =>
-            pin({
-              status: 'ready',
-              lat,
-              lng,
-              elevationM: 0,
-              source: 'map',
-              label: '지도에서 찍은 점',
-            })
-          }
-        />
-        <p className="note">지도의 가운데는 자리가 아닙니다. 점을 찍어야 하늘 정보를 계산합니다.</p>
-      </section>
-
-      <section className="saved" id="saved" aria-labelledby="saved-title">
-        <h2 id="saved-title">저장한 촬영</h2>
-        <AlertStatus permission={permission} onEnable={() => void enableAlerts()} />
-        {upcoming.length === 0 ? (
-          <p className="note">저장하면 창이 시작되기 30분 전에 알려 줍니다. 알림을 거부해도 다음 창은 여기에 남습니다.</p>
-        ) : (
-          upcoming.map((item) => (
-            <article key={`${item.saved.id}:${item.dayOffset}`} className={`alert-card ${item.phase}`}>
-              <p className="alert-kicker">{phaseLabel(item.phase, permission)}</p>
-              <h3>{item.saved.name}</h3>
-              <p className="alert-title">{item.saved.title}</p>
-              <p className="alert-window">
-                {dayLabel(item.dayOffset)} {formatRange(item.window.start, item.window.end)}
-              </p>
-              <p className="alert-meta">{alertDetail(item, permission, now)}</p>
-            </article>
-          ))
-        )}
-      </section>
-
-      <footer>
-        <p>브라우저 메뉴에서 홈 화면에 추가하면 앱처럼 열립니다.</p>
-        <p>해와 달의 위치는 Astronomy Engine으로 계산합니다. 주변 장소는 OpenStreetMap입니다.</p>
-      </footer>
+          </section>
+        </>
+      ) : (
+        <p className="note">지역을 정하면 이번 주의 사진과 찍는 방법이 나옵니다.</p>
+      )}
     </main>
   );
 }
 
-function SkyBlock({
-  sky,
-  guide,
-  live,
-  dayOffset,
+function WeeklyCard({ pick, region, now }: { pick: ReferenceCopy & { startsAt: string }; region: StoredRegion; now: Date }) {
+  return (
+    <article className="shot" id="weekly-pick" data-weekly={pick.id} aria-labelledby="weekly-title">
+      <p className="shot-kicker">
+        {formatSelection(pick.startsAt)}
+        {holdsUntilNextSunday(pick.startsAt, now) ? ' · 다음 일요일 오전 9시까지' : ''}
+      </p>
+      <h2 id="weekly-title">{SOURCE_NAME[pick.source]}</h2>
+      <p className="summary" data-weekly-scene>
+        {pick.scene}
+      </p>
+      <p className="summary">
+        <a href={pick.url} target="_blank" rel="noopener noreferrer">
+          페이지 열기
+        </a>
+      </p>
+      <Advice copy={pick} region={region} now={now} full />
+    </article>
+  );
+}
+
+function ReferenceCard({
+  copy,
+  region,
   now,
-  saved,
-  onToggle,
-  place,
+  onRemove,
 }: {
-  sky: DaySky;
-  guide: SpotGuide;
-  live: { sun: SkyPoint; moon: SkyPoint };
-  dayOffset: number;
+  copy: ReferenceCopy;
+  region: StoredRegion;
   now: Date;
-  saved: SavedShot[];
-  onToggle: (shot: SavedShot) => void;
-  place: { name: string; lat: number; lng: number; elevationM: number };
+  onRemove: () => void;
 }) {
   return (
-    <>
-      <section className="panel" id="sky" data-spot="here" aria-labelledby="sky-title">
-        <div className="panel-head">
-          <h2 id="sky-title">이 자리의 하늘</h2>
-          <p>{dayLabel(dayOffset)} {formatDay(dayOffset, now)}</p>
-        </div>
-        <div className="events">
-          <EventStat label="일출" time={sky.sunrise} point={positionOn('sun', sky.sunrise, place.lat, place.lng, place.elevationM)} />
-          <EventStat label="일몰" time={sky.sunset} point={positionOn('sun', sky.sunset, place.lat, place.lng, place.elevationM)} />
-        </div>
-        <HourBlock
-          label="골든아워"
-          morningLabel="아침"
-          eveningLabel="저녁"
-          morning={rangeOrEmpty(sky.sunrise, sky.goldenMorningEnd)}
-          evening={rangeOrEmpty(sky.goldenEveningStart, sky.sunset)}
-          morningPoint={positionOn('sun', sky.goldenMorningEnd, place.lat, place.lng, place.elevationM)}
-          eveningPoint={positionOn('sun', sky.goldenEveningStart, place.lat, place.lng, place.elevationM)}
-        />
-        <HourBlock
-          label="블루아워"
-          morningLabel="아침"
-          eveningLabel="저녁"
-          morning={rangeOrEmpty(sky.blueMorningStart, sky.sunrise)}
-          evening={rangeOrEmpty(sky.sunset, sky.blueEveningEnd)}
-          morningPoint={positionOn('sun', sky.blueMorningStart, place.lat, place.lng, place.elevationM)}
-          eveningPoint={positionOn('sun', sky.blueEveningEnd, place.lat, place.lng, place.elevationM)}
-        />
-        <div className="events moon">
-          <EventStat label="월출" time={sky.moonrise} point={positionOn('moon', sky.moonrise, place.lat, place.lng, place.elevationM)} />
-          <EventStat label="월몰" time={sky.moonset} point={positionOn('moon', sky.moonset, place.lat, place.lng, place.elevationM)} />
-        </div>
-        <p className="phase">
-          달의 위상 <strong>{guide.moon.phaseName}</strong>
-          <span>· 밝기 {Math.round(guide.moon.litFraction * 100)}%</span>
-        </p>
-        <p className="live">{guide.moon.summary}</p>
-        <p className="live">
-          지금 해 {formatPosition(live.sun)}
-          <br />
-          지금 달 {formatPosition(live.moon)}
-        </p>
-      </section>
-
-      <section className="panel track-panel" aria-labelledby="track-title">
-        <h2 id="track-title">하루의 해</h2>
-        <p className="day-line">{guide.dayLine}</p>
-        <TrackList track={guide.track} />
-      </section>
-
-      <section className="shots" aria-labelledby="shot-title">
-        <h2 id="shot-title">이 자리에서 되는 사진</h2>
-        <p className="note">해와 달의 방향에 맞춘 구도입니다. 미리 정해 둔 명소가 아닙니다.</p>
-        {guide.ideas.map((item) => (
-          <IdeaCard
-            key={item.id}
-            idea={item}
-            sky={sky}
-            dayOffset={dayOffset}
-            saved={saved.some((shot) => shot.id === item.id)}
-            onToggle={() =>
-              onToggle({
-                id: item.id,
-                name: place.name,
-                lat: place.lat,
-                lng: place.lng,
-                elevationM: place.elevationM,
-                title: item.title,
-                window: item.window,
-                savedAt: new Date().toISOString(),
-              })
-            }
-          />
-        ))}
-      </section>
-    </>
-  );
-}
-
-function EventStat({ label, time, point }: { label: string; time: Date | null; point: SkyPoint | null }) {
-  return (
-    <div className="event">
-      <span>{label}</span>
-      <strong>{time ? formatClock(time) : '없음'}</strong>
-      <p>{formatPosition(point)}</p>
-    </div>
-  );
-}
-
-function HourBlock({
-  label,
-  morningLabel,
-  eveningLabel,
-  morning,
-  evening,
-  morningPoint,
-  eveningPoint,
-}: {
-  label: string;
-  morningLabel: string;
-  eveningLabel: string;
-  morning: string;
-  evening: string;
-  morningPoint: SkyPoint | null;
-  eveningPoint: SkyPoint | null;
-}) {
-  return (
-    <div className="hours-block">
-      <h3>{label}</h3>
-      <p>
-        {morningLabel} {morning}
+    <article className="shot" data-added-reference={copy.url}>
+      <p className="shot-kicker" data-source={copy.source}>
+        {SOURCE_NAME[copy.source]}
       </p>
-      <p className="dim">{formatPosition(morningPoint)}</p>
-      <p>
-        {eveningLabel} {evening}
+      <h3>고른 페이지</h3>
+      <p className="summary">{copy.scene}</p>
+      <p className="summary">
+        <a href={copy.url} target="_blank" rel="noopener noreferrer">
+          {copy.url}
+        </a>
       </p>
-      <p className="dim">{formatPosition(eveningPoint)}</p>
-    </div>
-  );
-}
-
-function TrackList({ track }: { track: SpotGuide['track'] }) {
-  return (
-    <ol className="track">
-      {track.map((row) => (
-        <li key={row.label}>
-          <span>{row.label}</span>
-          <p>
-            {formatClock(row.time)} · 방위 {Math.round(((row.azimuth % 360) + 360) % 360)}° · 고도 {row.altitude.toFixed(1)}°
-          </p>
-          <p className="dim">{row.note}</p>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function IdeaCard({
-  idea,
-  sky,
-  dayOffset,
-  saved,
-  onToggle,
-}: {
-  idea: ShootIdea;
-  sky: DaySky;
-  dayOffset: number;
-  saved: boolean;
-  onToggle: () => void;
-}) {
-  const window = shotWindow(idea.window, sky);
-  return (
-    <article className="shot">
-      <FrameSketch compositions={[idea.composition]} />
-      <p className="shot-kicker">{dayLabel(dayOffset)} {window ? formatRange(window.start, window.end) : '창 없음'}</p>
-      <h3>{idea.title}</h3>
-      <p className="summary">{idea.summary}</p>
-      <div className="method">
-        <h4>해·달 위치</h4>
-        <p>{idea.detail}</p>
-      </div>
-      <div className="method">
-        <h4>구도 · {COMPOSITION_LABEL[idea.composition]}</h4>
-        <p>{idea.frame}</p>
-      </div>
-      <button type="button" className={saved ? 'save on' : 'save'} aria-pressed={saved} onClick={onToggle}>
-        {saved ? '저장됨' : '이 촬영 저장'}
+      <Advice copy={copy} region={region} now={now} full={false} />
+      <button className="save" type="button" onClick={onRemove}>
+        빼기
       </button>
     </article>
   );
 }
 
-function AlertStatus({ permission, onEnable }: { permission: NotifyPermission; onEnable: () => void }) {
-  if (permission === 'granted') {
-    return <p className="note">브라우저 알림이 켜져 있습니다. 창 시작 30분 전에 울립니다.</p>;
-  }
-  if (permission === 'denied') {
-    return <p className="note warn">브라우저 알림은 꺼져 있습니다. 다가오는 창은 이 화면에 그대로 표시됩니다.</p>;
-  }
-  if (permission === 'unsupported') {
-    return <p className="note warn">이 브라우저는 알림을 지원하지 않습니다. 다가오는 창은 이 화면에 표시됩니다.</p>;
-  }
+function Advice({ copy, region, now, full }: { copy: ReferenceCopy; region: StoredRegion; now: Date; full: boolean }) {
+  const place = fillRegion(copy.place, region.name);
+  const time =
+    region.lat !== null && region.lng !== null ? recommendTime(region.lat, region.lng, copy.window, now) : windowFallback(copy);
   return (
-    <div className="ask">
-      <p className="note">알림은 아직 요청하지 않았습니다. 허용하지 않아도 다음 창은 아래에 나옵니다.</p>
-      <button type="button" className="ghost" onClick={onEnable}>
-        브라우저 알림 허용
-      </button>
+    <div className="method" data-method>
+      <h4>장소</h4>
+      <p data-place>{place}</p>
+      <h4>시간</h4>
+      <p data-time>{time}</p>
+      <h4>찍는 방법</h4>
+      <p>{copy.method}</p>
+      {full && (
+        <>
+          <h4>빛</h4>
+          <p>{copy.light}</p>
+          <h4>서는 자리</h4>
+          <p>{copy.stand}</p>
+          <h4>기다리는 것</h4>
+          <p>{copy.wait}</p>
+          <h4>거리</h4>
+          <p>{copy.distance}</p>
+        </>
+      )}
     </div>
   );
 }
 
-function rangeOrEmpty(start: Date | null, end: Date | null): string {
-  if (!start || !end || end <= start) return '없음';
-  return formatRange(start, end);
+function holdsUntilNextSunday(startsAt: string, now: Date): boolean {
+  return now.getTime() < new Date(startsAt).getTime() + 7 * 24 * 60 * 60 * 1000;
 }
 
-function formatCoord(lat: number, lng: number): string {
-  const ns = lat >= 0 ? '북위' : '남위';
-  const ew = lng >= 0 ? '동경' : '서경';
-  return `${ns} ${Math.abs(lat).toFixed(4)} · ${ew} ${Math.abs(lng).toFixed(4)}`;
-}
-
-function tabName(display: string, typed: string): string {
-  const fromResult = shortLabel(display);
-  if (fromResult && !/^\d+$/.test(fromResult)) return fromResult;
-  const compact = typed.trim();
-  return compact.length > 18 ? `${compact.slice(0, 18)}…` : compact;
-}
-
-function sourceLabel(source: 'gps' | 'search' | 'map' | 'favorite'): string {
-  if (source === 'gps') return '지금 있는 좌표';
-  if (source === 'search') return '검색으로 고른 좌표';
-  return '지도에서 찍은 좌표';
+function windowFallback(copy: ReferenceCopy): string {
+  return `${windowName(copy.window)} · 좌표가 없어 시계 시각은 빠집니다.`;
 }
 
 function shortLabel(label: string): string {
-  const head = label.split(',')[0]?.trim() ?? label;
-  return head.length > 28 ? `${head.slice(0, 28)}…` : head;
-}
-
-function compassFrom(azimuth: number): string {
-  const names = ['북', '북동', '동', '남동', '남', '남서', '서', '북서'];
-  return names[Math.round((((azimuth % 360) + 360) % 360) / 45) % 8];
-}
-
-function upcomingFor(savedShot: SavedShot, now: Date): Upcoming | null {
-  for (const dayOffset of [0, 1]) {
-    const sky = getDaySky(savedShot.lat, savedShot.lng, savedShot.elevationM, dayOffset, now);
-    const window = shotWindow(savedShot.window as WindowKind, sky);
-    if (!window || window.end.getTime() <= now.getTime()) continue;
-    return { saved: savedShot, window, dayOffset, phase: phaseOf(window, now) };
-  }
-  return null;
-}
-
-function phaseOf(window: TimeWindow, now: Date): Upcoming['phase'] {
-  const time = now.getTime();
-  if (time >= window.start.getTime()) return 'open';
-  if (time >= window.start.getTime() - ALERT_LEAD_MS) return 'approaching';
-  return 'scheduled';
-}
-
-function phaseLabel(phase: Upcoming['phase'], permission: NotifyPermission): string {
-  if (phase === 'open') return '지금 창이 열려 있습니다';
-  if (phase === 'approaching') {
-    return permission === 'granted' ? '곧 시작 · 알림을 보냈습니다' : '곧 시작 · 화면으로 안내 중';
-  }
-  if (permission === 'denied' || permission === 'unsupported') return '화면으로 안내';
-  return '알림 예정';
-}
-
-function alertDetail(item: Upcoming, permission: NotifyPermission, now: Date): string {
-  const alertAt = new Date(item.window.start.getTime() - ALERT_LEAD_MS);
-  if (item.phase === 'open') {
-    return `이 창은 ${formatWhen(item.window.end.getTime() - now.getTime())} 끝납니다.`;
-  }
-  if (item.phase === 'approaching') {
-    return `${formatWhen(item.window.start.getTime() - now.getTime())} 시작. ${permission === 'denied' ? '알림 권한이 없어도 이 창을 보여 줍니다.' : `알림 시각 ${formatClock(alertAt)}.`}`;
-  }
-  return `시작 ${formatWhen(item.window.start.getTime() - now.getTime())}. 알림 시각 ${formatClock(alertAt)}.`;
+  const parts = label.split(',').map((part) => part.trim()).filter(Boolean);
+  return parts.slice(0, 3).join(', ');
 }
