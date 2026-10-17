@@ -3,6 +3,10 @@ export interface SearchHit {
   label: string;
   lat: number;
   lng: number;
+  south: number;
+  north: number;
+  west: number;
+  east: number;
 }
 
 interface NominatimHit {
@@ -10,6 +14,7 @@ interface NominatimHit {
   display_name?: string;
   lat?: string;
   lon?: string;
+  boundingbox?: string[];
 }
 
 export async function searchPlaces(query: string, signal: AbortSignal): Promise<SearchHit[]> {
@@ -29,7 +34,21 @@ export async function searchPlaces(query: string, signal: AbortSignal): Promise<
     const lat = Number(hit.lat);
     const lng = Number(hit.lon);
     const label = hit.display_name?.trim() ?? '';
+    const box = hit.boundingbox?.map(Number) ?? [];
+    const south = box[0];
+    const north = box[1];
+    const west = box[2];
+    const east = box[3];
     if (!label || !Number.isFinite(lat) || !Number.isFinite(lng)) return [];
-    return [{ id: String(hit.place_id ?? label), label, lat, lng }];
+    return [{
+      id: String(hit.place_id ?? label),
+      label,
+      lat,
+      lng,
+      south: Number.isFinite(south) ? south : lat - 0.15,
+      north: Number.isFinite(north) ? north : lat + 0.15,
+      west: Number.isFinite(west) ? west : lng - 0.18,
+      east: Number.isFinite(east) ? east : lng + 0.18,
+    }];
   });
 }

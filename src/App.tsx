@@ -1,9 +1,27 @@
-import { useMemo, useState, type FormEvent } from 'react';
-import { describeAdded, fillRegion, weeklyPick, type ReferenceCopy } from './catalog';
-import { recommendTime, windowName } from './recommend';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { describeAdded, weeklyPick, windowForScene, type ReferenceBrief } from './catalog';
+import { aimFor, recommendTime } from './recommend';
+import {
+  FALLBACK_SCENES,
+  isJeju,
+  loadSpotsAround,
+  pickSpots,
+  spotCounts,
+  spotsForRegion,
+  whySpot,
+  type SceneChoice,
+  type Spot,
+} from './region-places';
 import { searchPlaces } from './search';
 import { SOURCE_NAME, parseReferenceAddress, referenceKey } from './sources';
-import { loadReferences, loadRegion, writeReferences, writeRegion, type StoredReference, type StoredRegion } from './storage';
+import {
+  loadReferences,
+  loadRegion,
+  writeReferences,
+  writeRegion,
+  type StoredReference,
+  type StoredRegion,
+} from './storage';
 import { formatSelection } from './week';
 
 export function App() {
@@ -15,7 +33,43 @@ export function App() {
   const [references, setReferences] = useState<StoredReference[]>(() => loadReferences());
   const [urlDraft, setUrlDraft] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [remoteSpots, setRemoteSpots] = useState<Spot[]>([]);
+  const [remoteState, setRemoteState] = useState<'idle' | 'loading' | 'missing' | 'ready'>('idle');
+  const [weeklyChoice, setWeeklyChoice] = useState<SceneChoice | null>(null);
   const pick = useMemo(() => weeklyPick(now), [now]);
+  const checked = region ? spotsForRegion(region.name) : null;
+  const spots = checked ?? remoteSpots;
+
+  useEffect(() => {
+    if (!region || checked) {
+      setRemoteSpots([]);
+      setRemoteState('idle');
+      return;
+    }
+    if (region.south === null || region.west === null || region.north === null || region.east === null) {
+      setRemoteSpots([]);
+      setRemoteState('missing');
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 12000);
+    setRemoteState('loading');
+    loadSpotsAround(region.south, region.west, region.north, region.east, controller.signal)
+      .then((found) => {
+        setRemoteSpots(found);
+        setRemoteState(found.length > 0 ? 'ready' : 'missing');
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        console.error(error);
+        setRemoteSpots([]);
+        setRemoteState('missing');
+      });
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [region, checked]);
 
   async function saveRegion(event: FormEvent) {
     event.preventDefault();
@@ -35,14 +89,35 @@ export function App() {
         label: hit?.label ?? '',
         lat: hit?.lat ?? null,
         lng: hit?.lng ?? null,
+        south: hit?.south ?? null,
+        north: hit?.north ?? null,
+        west: hit?.west ?? null,
+        east: hit?.east ?? null,
         savedAt: new Date().toISOString(),
       };
       writeRegion(next);
       setRegion(next);
       setRegionDraft('');
-      if (!hit) setRegionError('그 지역을 찾지 못했습니다. 이름은 저장했고, 시계 시각은 빠집니다.');
+      if (!hit && !isJeju(name)) setRegionError('그 지역을 찾지 못했습니다.');
     } catch {
-      setRegionError('지역을 찾지 못했습니다. 잠시 뒤 다시 시도하세요.');
+      if (isJeju(name)) {
+        const next: StoredRegion = {
+          name,
+          label: '',
+          lat: null,
+          lng: null,
+          south: null,
+          north: null,
+          west: null,
+          east: null,
+          savedAt: new Date().toISOString(),
+        };
+        writeRegion(next);
+        setRegion(next);
+        setRegionDraft('');
+      } else {
+        setRegionError('지역을 찾지 못했습니다. 잠시 뒤 다시 시도하세요.');
+      }
     } finally {
       setFinding(false);
     }
@@ -69,18 +144,27 @@ export function App() {
     setUrlError(null);
   }
 
+  function chooseScene(id: string, scene: SceneChoice) {
+    const next = references.map((item) => (item.id === id ? { ...item, sceneChoice: scene } : item));
+    writeReferences(next);
+    setReferences(next);
+  }
+
   function removeReference(id: string) {
     const next = references.filter((item) => item.id !== id);
     writeReferences(next);
     setReferences(next);
   }
 
+  const waiting = Boolean(region && !checked && remoteState === 'loading');
+  const missing = Boolean(region && !checked && remoteState === 'missing');
+
   return (
     <main className="app">
       <header className="mast">
         <p className="mark">촬영 참고</p>
         <h1>그때 그자리</h1>
-        <p className="lede">지역을 정하면, 시도해 볼 사진과 그 자리·시간을 골라 줍니다.</p>
+        <p className="lede">지역을 정하면, 그 지역의 실제 자리와 해의 시간을 골라 줍니다.</p>
       </header>
 
       <section className="panel" aria-labelledby="region-title">
@@ -94,6 +178,7 @@ export function App() {
             {region.label ? ` · ${shortLabel(region.label)}` : ''}
           </p>
         )}
+        {checked && <p className="note">OpenStreetMap · {spotCounts(checked)}</p>}
         <form className="search" id="region-form" onSubmit={saveRegion}>
           <label className="sr" htmlFor="region-name">
             지역 이름
@@ -102,7 +187,7 @@ export function App() {
             id="region-name"
             name="region"
             value={regionDraft}
-            placeholder="예: 부산 해운대"
+            placeholder="예: 제주"
             onChange={(event) => setRegionDraft(event.target.value)}
             autoComplete="off"
           />
@@ -115,7 +200,15 @@ export function App() {
 
       {region ? (
         <>
-          <WeeklyCard pick={pick} region={region} now={now} />
+          <WeeklyCard
+            pick={pick}
+            scene={pick.scene ?? weeklyChoice}
+            spots={spots}
+            now={now}
+            waiting={waiting}
+            missing={missing}
+            onChoose={setWeeklyChoice}
+          />
           <section className="favorites" aria-labelledby="add-title">
             <h2 id="add-title">페이지 주소로 추가</h2>
             <p className="day-line">1x, 1650Gallery, LensCulture, World Press Photo, 레드불 일루미네이트, 레드불 콘텐츠 풀.</p>
@@ -137,25 +230,48 @@ export function App() {
               </button>
             </form>
             {urlError && <p className="note error">{urlError}</p>}
-            {references.map((item) => (
-              <ReferenceCard
-                key={item.id}
-                copy={describeAdded(item.url, item.source)}
-                region={region}
-                now={now}
-                onRemove={() => removeReference(item.id)}
-              />
-            ))}
+            {references.map((item) => {
+              const brief = describeAdded(item.url, item.source);
+              return (
+                <ReferenceCard
+                  key={item.id}
+                  brief={brief}
+                  scene={item.sceneChoice ?? brief.scene}
+                  spots={spots}
+                  now={now}
+                  waiting={waiting}
+                  missing={missing}
+                  onChoose={(scene) => chooseScene(item.id, scene)}
+                  onRemove={() => removeReference(item.id)}
+                />
+              );
+            })}
           </section>
         </>
       ) : (
-        <p className="note">지역을 정하면 이번 주의 사진과 찍는 방법이 나옵니다.</p>
+        <p className="note">지역을 정하면 이번 주 링크와, 그 지역에서 시도할 자리가 나옵니다.</p>
       )}
     </main>
   );
 }
 
-function WeeklyCard({ pick, region, now }: { pick: ReferenceCopy & { startsAt: string }; region: StoredRegion; now: Date }) {
+function WeeklyCard({
+  pick,
+  scene,
+  spots,
+  now,
+  waiting,
+  missing,
+  onChoose,
+}: {
+  pick: ReferenceBrief & { startsAt: string };
+  scene: SceneChoice | null;
+  spots: Spot[];
+  now: Date;
+  waiting: boolean;
+  missing: boolean;
+  onChoose: (scene: SceneChoice) => void;
+}) {
   return (
     <article className="shot" id="weekly-pick" data-weekly={pick.id} aria-labelledby="weekly-title">
       <p className="shot-kicker">
@@ -163,43 +279,46 @@ function WeeklyCard({ pick, region, now }: { pick: ReferenceCopy & { startsAt: s
         {holdsUntilNextSunday(pick.startsAt, now) ? ' · 다음 일요일 오전 9시까지' : ''}
       </p>
       <h2 id="weekly-title">{SOURCE_NAME[pick.source]}</h2>
-      <p className="summary" data-weekly-scene>
-        {pick.scene}
-      </p>
       <p className="summary">
         <a href={pick.url} target="_blank" rel="noopener noreferrer">
           페이지 열기
         </a>
       </p>
-      <Advice copy={pick} region={region} now={now} full />
+      <PlaceAdvice brief={pick} scene={scene} spots={spots} now={now} waiting={waiting} missing={missing} onChoose={onChoose} />
     </article>
   );
 }
 
 function ReferenceCard({
-  copy,
-  region,
+  brief,
+  scene,
+  spots,
   now,
+  waiting,
+  missing,
+  onChoose,
   onRemove,
 }: {
-  copy: ReferenceCopy;
-  region: StoredRegion;
+  brief: ReferenceBrief;
+  scene: SceneChoice | null;
+  spots: Spot[];
   now: Date;
+  waiting: boolean;
+  missing: boolean;
+  onChoose: (scene: SceneChoice) => void;
   onRemove: () => void;
 }) {
   return (
-    <article className="shot" data-added-reference={copy.url}>
-      <p className="shot-kicker" data-source={copy.source}>
-        {SOURCE_NAME[copy.source]}
+    <article className="shot" data-added-reference={brief.url}>
+      <p className="shot-kicker" data-source={brief.source}>
+        {SOURCE_NAME[brief.source]}
       </p>
-      <h3>고른 페이지</h3>
-      <p className="summary">{copy.scene}</p>
       <p className="summary">
-        <a href={copy.url} target="_blank" rel="noopener noreferrer">
-          {copy.url}
+        <a href={brief.url} target="_blank" rel="noopener noreferrer">
+          {brief.url}
         </a>
       </p>
-      <Advice copy={copy} region={region} now={now} full={false} />
+      <PlaceAdvice brief={brief} scene={scene} spots={spots} now={now} waiting={waiting} missing={missing} onChoose={onChoose} />
       <button className="save" type="button" onClick={onRemove}>
         빼기
       </button>
@@ -207,29 +326,63 @@ function ReferenceCard({
   );
 }
 
-function Advice({ copy, region, now, full }: { copy: ReferenceCopy; region: StoredRegion; now: Date; full: boolean }) {
-  const place = fillRegion(copy.place, region.name);
-  const time =
-    region.lat !== null && region.lng !== null ? recommendTime(region.lat, region.lng, copy.window, now) : windowFallback(copy);
+function PlaceAdvice({
+  brief,
+  scene,
+  spots,
+  now,
+  waiting,
+  missing,
+  onChoose,
+}: {
+  brief: ReferenceBrief;
+  scene: SceneChoice | null;
+  spots: Spot[];
+  now: Date;
+  waiting: boolean;
+  missing: boolean;
+  onChoose: (scene: SceneChoice) => void;
+}) {
+  const windowKind = scene ? windowForScene(scene, brief.window) : brief.window;
+  const chosen = scene ? pickSpots(scene, spots, aimFor(windowKind)).slice(0, 3) : [];
   return (
     <div className="method" data-method>
-      <h4>장소</h4>
-      <p data-place>{place}</p>
-      <h4>시간</h4>
-      <p data-time>{time}</p>
-      <h4>찍는 방법</h4>
-      <p>{copy.method}</p>
-      {full && (
+      <h4>장면</h4>
+      {scene ? (
+        <p data-scene>
+          {scene} · {brief.basis}
+        </p>
+      ) : (
         <>
-          <h4>빛</h4>
-          <p>{copy.light}</p>
-          <h4>서는 자리</h4>
-          <p>{copy.stand}</p>
-          <h4>기다리는 것</h4>
-          <p>{copy.wait}</p>
-          <h4>거리</h4>
-          <p>{copy.distance}</p>
+          <p>페이지 글을 읽지 못했습니다. 장면을 고르세요.</p>
+          <div className="chips" role="group" aria-label="장면">
+            {FALLBACK_SCENES.map((choice) => (
+              <button key={choice} type="button" className="chip" onClick={() => onChoose(choice)}>
+                {choice}
+              </button>
+            ))}
+          </div>
         </>
+      )}
+      <h4>장소</h4>
+      {waiting && <p>이 지역의 장소를 찾는 중입니다.</p>}
+      {!waiting && missing && <p data-place-missing>이 지역의 장소 자료를 찾지 못했습니다.</p>}
+      {!waiting && !missing && scene && chosen.length === 0 && (
+        <p data-place-missing>이 장면에 맞는 장소 자료를 찾지 못했습니다.</p>
+      )}
+      {chosen.length > 0 && (
+        <ul className="spot-list">
+          {chosen.map((spot) => (
+            <li key={spot.osm}>
+              <strong data-place>{spot.name}</strong>
+              <p data-why>{whySpot(scene as SceneChoice, spot)}</p>
+              <p data-time>{recommendTime(spot.lat, spot.lng, windowKind, now)}</p>
+              <p className="dim">
+                {spot.lat.toFixed(5)}, {spot.lng.toFixed(5)} · {spot.osm}
+              </p>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
@@ -239,11 +392,11 @@ function holdsUntilNextSunday(startsAt: string, now: Date): boolean {
   return now.getTime() < new Date(startsAt).getTime() + 7 * 24 * 60 * 60 * 1000;
 }
 
-function windowFallback(copy: ReferenceCopy): string {
-  return `${windowName(copy.window)} · 좌표가 없어 시계 시각은 빠집니다.`;
-}
-
 function shortLabel(label: string): string {
-  const parts = label.split(',').map((part) => part.trim()).filter(Boolean);
-  return parts.slice(0, 3).join(', ');
+  return label
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(', ');
 }

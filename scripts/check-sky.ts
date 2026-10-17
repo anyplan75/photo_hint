@@ -1,4 +1,5 @@
 import { WEEKLY_PICKS, weeklyPick } from '../src/catalog';
+import { JEJU_SPOTS, pickSpots, whySpot } from '../src/region-places';
 import { distanceMeters } from '../src/geo';
 import { buildSpotGuide, formatPosition } from '../src/ideas';
 import { selectNearby } from '../src/nearby';
@@ -115,6 +116,13 @@ const street = parseReferenceAddress('https://1x.com/gallery/street');
 assert(!('error' in street) && street.source === '1x', '1x street page is an allowed source');
 assert(sourceOf(new URL('https://example.com/photo')) === null, 'other sites are refused');
 assert('error' in parseReferenceAddress('https://example.com/photo'), 'pasted foreign pages are refused');
+const fields = pickSpots('들판', JEJU_SPOTS, 260);
+assert(fields[0]?.name === '성실농원', 'a rural scene uses the named Jeju farmland');
+assert(fields.some((spot) => spot.name === '엉또농원'), 'the other named farmland stays available');
+assert(pickSpots('바다', JEJU_SPOTS, 260)[0]?.name === '협재 해수욕장', 'sunset aims at the west-facing beach');
+assert(pickSpots('들판', [], 260).length === 0, 'a region without places stays empty');
+assert(whySpot('들판', fields[0]).includes('성실농원'), 'the reason names the real place');
+assert(!whySpot('들판', fields[0]).includes('부산'), 'the reason does not borrow another city');
 
 if (failed) {
   console.error('\nsky check failed');

@@ -1,3 +1,4 @@
+import type { SceneChoice } from './region-places';
 import type { SourceId } from './sources';
 import type { WindowKind } from './places';
 
@@ -77,6 +78,10 @@ export interface StoredRegion {
   label: string;
   lat: number | null;
   lng: number | null;
+  south: number | null;
+  north: number | null;
+  west: number | null;
+  east: number | null;
   savedAt: string;
 }
 
@@ -85,7 +90,14 @@ export function loadRegion(): StoredRegion | null {
     const raw = localStorage.getItem(REGION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
-    return isRegion(parsed) ? parsed : null;
+    if (!isRegion(parsed)) return null;
+    return {
+      ...parsed,
+      south: parsed.south ?? null,
+      north: parsed.north ?? null,
+      west: parsed.west ?? null,
+      east: parsed.east ?? null,
+    };
   } catch {
     return null;
   }
@@ -102,6 +114,7 @@ export interface StoredReference {
   url: string;
   source: SourceId;
   addedAt: string;
+  sceneChoice?: SceneChoice;
 }
 
 export function loadReferences(): StoredReference[] {

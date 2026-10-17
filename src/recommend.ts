@@ -1,7 +1,7 @@
 import type { WindowKind } from './places';
-import { getDaySky } from './sky';
+import { getDaySky, skyPosition } from './sky';
 import { formatRange } from './time';
-import { shotWindow } from './windows';
+import { sampleTime, shotWindow } from './windows';
 
 export function windowName(kind: WindowKind): string {
   switch (kind) {
@@ -22,14 +22,23 @@ export function windowName(kind: WindowKind): string {
   }
 }
 
+export function aimFor(kind: WindowKind): number | null {
+  if (kind === 'morning-golden' || kind === 'sunrise-20' || kind === 'morning-blue') return 100;
+  if (kind === 'evening-golden' || kind === 'sunset-20' || kind === 'evening-blue') return 260;
+  return null;
+}
+
 export function recommendTime(lat: number, lng: number, kind: WindowKind, now = new Date()): string {
   const today = shotWindow(kind, getDaySky(lat, lng, 0, 0, now));
   if (today && today.end.getTime() > now.getTime()) {
-    return `오늘 ${formatRange(today.start, today.end)} · ${windowName(kind)}`;
+    return line('오늘', today, kind, lat, lng);
   }
   const tomorrow = shotWindow(kind, getDaySky(lat, lng, 0, 1, now));
-  if (tomorrow) {
-    return `내일 ${formatRange(tomorrow.start, tomorrow.end)} · ${windowName(kind)}`;
-  }
+  if (tomorrow) return line('내일', tomorrow, kind, lat, lng);
   return windowName(kind);
+}
+
+function line(day: string, window: { start: Date; end: Date }, kind: WindowKind, lat: number, lng: number): string {
+  const sun = skyPosition('sun', sampleTime(kind, window), lat, lng, 0);
+  return `${day} ${formatRange(window.start, window.end)} · ${windowName(kind)} · 해 방위 ${Math.round(sun.azimuth)}°`;
 }
