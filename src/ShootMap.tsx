@@ -38,7 +38,9 @@ export function ShootMap({
 
   useEffect(() => {
     if (!token || !canvas.current) return;
+    mapboxgl.accessToken = token;
     const map = new mapboxgl.Map({
+      accessToken: token,
       container: canvas.current,
       style: 'mapbox://styles/mapbox/outdoors-v12',
       center: center ? [center.lng, center.lat] : [126.55, 33.38],
