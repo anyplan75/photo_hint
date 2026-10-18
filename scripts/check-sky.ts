@@ -1,4 +1,6 @@
 import { WEEKLY_PICKS, weeklyPick } from '../src/catalog';
+import { mapboxPublicToken } from '../src/mapbox-token';
+import { addShootPoint, loadShootPoints } from '../src/shoot-points';
 import { shootingGuide } from '../src/guide';
 import { sunPlan } from '../src/recommend';
 import { JEJU_SPOTS, pickSpots, whySpot } from '../src/region-places';
@@ -152,6 +154,23 @@ assert(beachGear.includes('ND') && !beachGear.includes('무게가 있는 삼각�
 assert(geumLens !== beachLens && geumGear !== beachGear, 'lens and gear are not the same list on every card');
 const unread = shootingGuide('바다', '페이지 글을 읽지 못함', oreum, plan);
 assert(unread.lead.includes('그 사진 한 장을 읽은 것이 아닙니다'), 'an unread page is a scene-type guide');
+assert(mapboxPublicToken('') === null, 'an empty map token stays off');
+assert(mapboxPublicToken('sk.hidden') === null, 'a secret token is not used');
+assert(mapboxPublicToken('  pk.public  ') === 'pk.public', 'a public token is trimmed');
+const liveToken = mapboxPublicToken();
+assert(liveToken === null || liveToken.startsWith('pk.'), 'the build token is public or absent');
+const memory = new Map<string, string>();
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: {
+    getItem: (key: string) => memory.get(key) ?? null,
+    setItem: (key: string, value: string) => memory.set(key, value),
+    removeItem: (key: string) => memory.delete(key),
+  },
+});
+addShootPoint({ id: 'point-1', region: '제주', name: '아침 자리', lat: 33.35, lng: 126.3, savedAt: '2026-10-18T00:00:00.000Z' });
+assert(loadShootPoints('제주').some((point) => point.name === '아침 자리'), 'a named shooting point stays in the browser');
+assert(loadShootPoints('부산').length === 0, 'a saved point stays with its region');
 
 if (failed) {
   console.error('\nsky check failed');

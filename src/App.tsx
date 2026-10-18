@@ -14,6 +14,7 @@ import {
   type SceneChoice,
   type Spot,
 } from './region-places';
+import { ShootMap } from './ShootMap';
 import { searchPlaces } from './search';
 import { SOURCE_NAME, parseReferenceAddress, referenceKey } from './sources';
 import {
@@ -38,9 +39,17 @@ export function App() {
   const [remoteSpots, setRemoteSpots] = useState<Spot[]>([]);
   const [remoteState, setRemoteState] = useState<'idle' | 'loading' | 'missing' | 'ready'>('idle');
   const [weeklyChoice, setWeeklyChoice] = useState<SceneChoice | null>(null);
+  const [weeklyOsm, setWeeklyOsm] = useState('');
   const pick = useMemo(() => weeklyPick(now), [now]);
   const checked = region ? spotsForRegion(region.name) : null;
   const spots = checked ?? remoteSpots;
+  const weeklyScene = pick.scene ?? weeklyChoice;
+  const weeklyWindow = weeklyScene ? windowForScene(weeklyScene, pick.window) : pick.window;
+  const weeklySpots = useMemo(
+    () => (weeklyScene ? pickSpots(weeklyScene, spots, aimFor(weeklyWindow)) : []),
+    [weeklyScene, spots, weeklyWindow],
+  );
+  const weeklyActive = weeklySpots.some((spot) => spot.osm === weeklyOsm) ? weeklyOsm : (weeklySpots[0]?.osm ?? '');
 
   useEffect(() => {
     if (!region || checked) {
@@ -202,14 +211,23 @@ export function App() {
 
       {region ? (
         <>
+          <ShootMap
+            region={region.name}
+            center={region.lat !== null && region.lng !== null ? { lat: region.lat, lng: region.lng } : null}
+            spots={weeklySpots}
+            activeOsm={weeklyActive}
+            onSelect={setWeeklyOsm}
+          />
           <WeeklyCard
             pick={pick}
-            scene={pick.scene ?? weeklyChoice}
+            scene={weeklyScene}
             spots={spots}
             now={now}
             waiting={waiting}
             missing={missing}
+            selectedOsm={weeklyActive}
             onChoose={setWeeklyChoice}
+            onSelect={setWeeklyOsm}
           />
           <section className="favorites" aria-labelledby="add-title">
             <h2 id="add-title">페이지 주소로 추가</h2>
@@ -264,7 +282,9 @@ function WeeklyCard({
   now,
   waiting,
   missing,
+  selectedOsm,
   onChoose,
+  onSelect,
 }: {
   pick: ReferenceBrief & { startsAt: string };
   scene: SceneChoice | null;
@@ -272,7 +292,9 @@ function WeeklyCard({
   now: Date;
   waiting: boolean;
   missing: boolean;
+  selectedOsm: string;
   onChoose: (scene: SceneChoice) => void;
+  onSelect: (osm: string) => void;
 }) {
   return (
     <article className="shot" id="weekly-pick" data-weekly={pick.id} aria-labelledby="weekly-title">
@@ -286,7 +308,17 @@ function WeeklyCard({
           페이지 열기
         </a>
       </p>
-      <PlaceAdvice brief={pick} scene={scene} spots={spots} now={now} waiting={waiting} missing={missing} onChoose={onChoose} />
+      <PlaceAdvice
+        brief={pick}
+        scene={scene}
+        spots={spots}
+        now={now}
+        waiting={waiting}
+        missing={missing}
+        selectedOsm={selectedOsm}
+        onChoose={onChoose}
+        onSelect={onSelect}
+      />
     </article>
   );
 }
@@ -335,7 +367,9 @@ function PlaceAdvice({
   now,
   waiting,
   missing,
+  selectedOsm,
   onChoose,
+  onSelect,
 }: {
   brief: ReferenceBrief;
   scene: SceneChoice | null;
@@ -343,12 +377,19 @@ function PlaceAdvice({
   now: Date;
   waiting: boolean;
   missing: boolean;
+  selectedOsm?: string;
   onChoose: (scene: SceneChoice) => void;
+  onSelect?: (osm: string) => void;
 }) {
   const windowKind = scene ? windowForScene(scene, brief.window) : brief.window;
   const chosen = scene ? pickSpots(scene, spots, aimFor(windowKind)) : [];
-  const [selected, setSelected] = useState(chosen[0]?.osm ?? '');
+  const [localSelected, setLocalSelected] = useState(chosen[0]?.osm ?? '');
+  const selected = selectedOsm !== undefined ? selectedOsm : localSelected;
   const active = chosen.some((spot) => spot.osm === selected) ? selected : chosen[0]?.osm;
+  function choose(osm: string) {
+    setLocalSelected(osm);
+    onSelect?.(osm);
+  }
   const activeSpot = chosen.find((spot) => spot.osm === active);
   const guide = scene && activeSpot ? shootingGuide(scene, brief.basis, activeSpot, sunPlan(activeSpot.lat, activeSpot.lng, windowKind, now)) : null;
   return (
@@ -380,7 +421,7 @@ function PlaceAdvice({
         <ul className="spot-list">
           {chosen.map((spot) => (
             <li key={spot.osm} className={active === spot.osm ? 'on' : ''}>
-              <button type="button" className="spot-pick" aria-pressed={active === spot.osm} onClick={() => setSelected(spot.osm)}>
+              <button type="button" className="spot-pick" aria-pressed={active === spot.osm} onClick={() => choose(spot.osm)}>
                 <strong data-place>{spot.name}</strong>
                 <span data-match>{matchLabel(scene as SceneChoice, spot)}</span>
               </button>

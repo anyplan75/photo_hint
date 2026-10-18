@@ -256,6 +256,31 @@ button, input { font: inherit; }
   border-top: 1px solid var(--line);
 }
 
+.shoot-map { margin-top: 18px; }
+.map-canvas { height: 420px; border-radius: 16px; overflow: hidden; background: #d7d0c4; }
+.map-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 8px 0 0; font-size: 0.86rem; }
+.map-pin {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #221e18;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.map-pin.weekly {
+  width: 22px;
+  height: 22px;
+  background: #c9842a;
+  box-shadow: 0 0 0 4px rgba(201, 132, 42, 0.45);
+}
+.map-pin.mine { background: #1f6f68; border-radius: 3px; }
+.map-pin.draft { background: #fff; border-color: #c9842a; }
+.user-points { list-style: none; margin: 10px 0 0; padding: 0; }
+.user-points li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid rgba(34, 30, 24, 0.14); }
+.user-points button { border: 0; background: transparent; color: #8a5a12; font-weight: 700; cursor: pointer; }
+
 .spot-list {
   list-style: none;
   margin: 8px 0 0;
