@@ -17,6 +17,8 @@ export function shootingGuide(scene: SceneChoice, basis: string, spot: RankedSpo
     lead: lead + mismatch,
     blocks: [
       { heading: '준비', body: prepare(scene) },
+      { heading: '렌즈', body: lensFor(scene, spot) },
+      { heading: '장비', body: gearFor(scene, spot) },
       { heading: '도착', body: `${plan.arrive} 갈 곳은 ${place}입니다.` },
       { heading: '빛의 방향', body: light(plan, spot.name) },
       { heading: '서는 자리', body: stand(spot) },
@@ -54,6 +56,62 @@ function prepare(scene: SceneChoice): string {
       return '바람막이, 미끄럼 방지, 스트랩을 손목에 고정합니다. 절벽 끝에는 삼각대를 세우지 않습니다.';
     case '항구':
       return '렌즈 헝겊, 방수, 수평을 맞출 삼각대. 부두의 난간 높이를 가늠할 수 있게 낮은 시점도 준비합니다.';
+  }
+}
+
+function lensFor(scene: SceneChoice, spot: RankedSpot): string {
+  const place = spot.address ? `${spot.name}(${spot.address})` : spot.name;
+  switch (scene) {
+    case '오름':
+      return `${place}에서는 주변보다 높아 하늘이 넓습니다. 16–35mm 광각을 가져갑니다.`;
+    case '바다':
+      return `${coastLine(spot)} 70–200mm 짧은 망원을 가져갑니다.`;
+    case '들판':
+      if (spot.kind === 'coast' || spot.kind === 'cliff' || spot.kind === 'harbor') {
+        return `${place}에서는 들판 유형을 물가에서 시도합니다. 트인 바닥은 24mm 광각으로, 먼 물 선은 70–200mm 짧은 망원으로 받습니다.`;
+      }
+      return `${place}에서는 농지라 가까운 바닥과 먼 선이 함께 있습니다. 24–70mm를 가져갑니다.`;
+    case '거리':
+      return `${place}의 인도에서는 길과 벽을 한 번에 담도록 35mm를 가져갑니다.`;
+    case '사람':
+      return `${place}에서는 사람에게 바짝 다가가지 않도록 85mm를 가져갑니다.`;
+    case '밤':
+      return `${place}의 밤에는 남은 하늘을 남기도록 조리개가 밝은 24mm를 가져갑니다.`;
+    case '절벽':
+      return `${place}에서는 아래가 열린 절벽입니다. 16–35mm 광각을 가져가고, 먼 물 선에는 70–200mm를 더합니다.`;
+    case '항구':
+      return `${place}의 부두에서는 수평을 24–70mm로 맞추고, 떨어진 배는 70–200mm 짧은 망원으로 당깁니다.`;
+  }
+}
+
+function coastLine(spot: RankedSpot): string {
+  const place = spot.address ? `${spot.name}(${spot.address})` : spot.name;
+  if (spot.seaward === undefined) return `${place}에서는 물 선이 멀리 있습니다.`;
+  return `${place}의 바다는 ${cardinal(spot.seaward)}쪽이라 물 선이 멀리 있습니다.`;
+}
+
+function gearFor(scene: SceneChoice, spot: RankedSpot): string {
+  const name = spot.name;
+  switch (scene) {
+    case '오름':
+      return `${name} 준비에는 이미 바람이 적혀 있습니다. 가벼운 다리 대신 무게가 있는 삼각대를 챙기고, 밝은 하늘에는 편광 필터를 더합니다. 물이 없으므로 ND는 빼 둡니다.`;
+    case '바다':
+      return `${name}은 물과 밝은 하늘이 함께 있습니다. 편광 필터와 ND 필터를 챙기고, 소금기를 닦을 천을 따로 둡니다.`;
+    case '들판':
+      if (spot.kind === 'coast' || spot.kind === 'cliff' || spot.kind === 'harbor') {
+        return `${name}은 들판 유형이지만 물가입니다. 무릎 높이 삼각대, 편광 필터, 물용 ND를 챙깁니다.`;
+      }
+      return `${name}은 농지라 물이 없습니다. 무릎 높이 삼각대와 밝은 하늘용 편광 필터를 챙기고, ND는 빼 둡니다.`;
+    case '거리':
+      return `${name}은 걷는 거리입니다. 삼각대와 필터는 빼 두고, 스트랩만 손목에 고정합니다.`;
+    case '사람':
+      return `${name}에서는 플래시와 삼각대, 필터를 빼 둡니다. 여분 배터리만 주머니에 둡니다.`;
+    case '밤':
+      return `${name}의 밤은 긴 노출입니다. 삼각대와 릴리즈, 작은 손전등을 챙기고, 편광 필터와 ND는 빼 둡니다.`;
+    case '절벽':
+      return `${name} 준비에는 이미 바람이 적혀 있습니다. 무게가 있는 삼각대는 난간 안쪽에만 세웁니다. 아래 물이 밝으면 편광 필터를 더합니다.`;
+    case '항구':
+      return `${name}은 부두의 물입니다. 수평용 삼각대, 편광 필터, ND, 소금기를 닦을 천을 챙깁니다.`;
   }
 }
 

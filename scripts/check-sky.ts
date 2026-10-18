@@ -133,10 +133,23 @@ const plan = sunPlan(oreum.lat, oreum.lng, 'morning-golden', new Date('2026-10-1
 const guide = shootingGuide('오름', '페이지 제목 Autumn foliage and landscapes', oreum, plan);
 assert(guide.lead.includes(oreum.address ?? '없는주소'), 'the guide names the place address');
 assert(
-  guide.blocks.map((block) => block.heading).join(',') === '준비,도착,빛의 방향,서는 자리,거리,기다리는 것,피할 조건',
+  guide.blocks.map((block) => block.heading).join(',') === '준비,렌즈,장비,도착,빛의 방향,서는 자리,거리,기다리는 것,피할 조건',
   'the guide covers preparation through conditions to avoid',
 );
-assert(guide.blocks[2].body.includes('방위'), 'light direction uses the sun at those coordinates');
+assert(guide.blocks.find((block) => block.heading === '빛의 방향')?.body.includes('방위'), 'light direction uses the sun at those coordinates');
+const geum = JEJU_SPOTS.find((spot) => spot.name === '금오름');
+const geumGuide = shootingGuide('오름', '페이지 제목 Autumn foliage and landscapes', { ...geum!, matchesScene: true }, plan);
+const geumLens = geumGuide.blocks.find((block) => block.heading === '렌즈')?.body ?? '';
+const geumGear = geumGuide.blocks.find((block) => block.heading === '장비')?.body ?? '';
+assert(geumLens.includes('금오름') && geumLens.includes('광각'), '금오름 asks for a wide lens');
+assert(geumGear.includes('무게가 있는 삼각대') && geumGear.includes('편광'), '금오름 asks for a sturdy tripod and a polarizer');
+const beach = pickSpots('바다', JEJU_SPOTS, 260)[0];
+const beachGuide = shootingGuide('바다', '페이지 분류', beach, sunPlan(beach.lat, beach.lng, 'sunset-20', new Date('2026-10-18T07:33:00.000Z')));
+const beachLens = beachGuide.blocks.find((block) => block.heading === '렌즈')?.body ?? '';
+const beachGear = beachGuide.blocks.find((block) => block.heading === '장비')?.body ?? '';
+assert(beachLens.includes('짧은 망원') && beachLens.includes(beach.address ?? ''), 'a coast line asks for a short tele at that address');
+assert(beachGear.includes('ND') && !beachGear.includes('무게가 있는 삼각대'), 'water gear is not the oreum kit');
+assert(geumLens !== beachLens && geumGear !== beachGear, 'lens and gear are not the same list on every card');
 const unread = shootingGuide('바다', '페이지 글을 읽지 못함', oreum, plan);
 assert(unread.lead.includes('그 사진 한 장을 읽은 것이 아닙니다'), 'an unread page is a scene-type guide');
 
