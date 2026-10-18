@@ -1,4 +1,6 @@
 import { WEEKLY_PICKS, weeklyPick } from '../src/catalog';
+import { shootingGuide } from '../src/guide';
+import { sunPlan } from '../src/recommend';
 import { JEJU_SPOTS, pickSpots, whySpot } from '../src/region-places';
 import { distanceMeters } from '../src/geo';
 import { buildSpotGuide, formatPosition } from '../src/ideas';
@@ -126,6 +128,17 @@ assert(pickSpots('바다', JEJU_SPOTS, 260)[0]?.name === '협재 해수욕장', 
 assert(pickSpots('들판', [], 260).length === 0, 'a region without places stays empty');
 assert(whySpot('들판', fields[0]).includes('성실농원'), 'the reason names the real place');
 assert(!whySpot('들판', fields[0]).includes('부산'), 'the reason does not borrow another city');
+const oreum = pickSpots('오름', JEJU_SPOTS, 100)[0];
+const plan = sunPlan(oreum.lat, oreum.lng, 'morning-golden', new Date('2026-10-18T07:33:00.000Z'));
+const guide = shootingGuide('오름', '페이지 제목 Autumn foliage and landscapes', oreum, plan);
+assert(guide.lead.includes(oreum.address ?? '없는주소'), 'the guide names the place address');
+assert(
+  guide.blocks.map((block) => block.heading).join(',') === '준비,도착,빛의 방향,서는 자리,거리,기다리는 것,피할 조건',
+  'the guide covers preparation through conditions to avoid',
+);
+assert(guide.blocks[2].body.includes('방위'), 'light direction uses the sun at those coordinates');
+const unread = shootingGuide('바다', '페이지 글을 읽지 못함', oreum, plan);
+assert(unread.lead.includes('그 사진 한 장을 읽은 것이 아닙니다'), 'an unread page is a scene-type guide');
 
 if (failed) {
   console.error('\nsky check failed');

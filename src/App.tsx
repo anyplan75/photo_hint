@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { describeAdded, weeklyPick, windowForScene, type ReferenceBrief } from './catalog';
-import { aimFor, recommendTime } from './recommend';
+import { shootingGuide } from './guide';
+import { aimFor, recommendTime, sunPlan } from './recommend';
 import {
   FALLBACK_SCENES,
   isJeju,
@@ -348,6 +349,8 @@ function PlaceAdvice({
   const chosen = scene ? pickSpots(scene, spots, aimFor(windowKind)) : [];
   const [selected, setSelected] = useState(chosen[0]?.osm ?? '');
   const active = chosen.some((spot) => spot.osm === selected) ? selected : chosen[0]?.osm;
+  const activeSpot = chosen.find((spot) => spot.osm === active);
+  const guide = scene && activeSpot ? shootingGuide(scene, brief.basis, activeSpot, sunPlan(activeSpot.lat, activeSpot.lng, windowKind, now)) : null;
   return (
     <div className="method" data-method>
       <h4>장면</h4>
@@ -387,6 +390,18 @@ function PlaceAdvice({
               <p className="dim">
                 {spot.lat.toFixed(5)}, {spot.lng.toFixed(5)} · {spot.osm}
               </p>
+              {active === spot.osm && guide && (
+                <section className="prep" data-guide data-guide-address={spot.address ?? ''}>
+                  <h4>준비 안내</h4>
+                  <p data-guide-lead>{guide.lead}</p>
+                  {guide.blocks.map((block) => (
+                    <div key={block.heading}>
+                      <h5>{block.heading}</h5>
+                      <p>{block.body}</p>
+                    </div>
+                  ))}
+                </section>
+              )}
             </li>
           ))}
         </ul>

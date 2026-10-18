@@ -304,6 +304,24 @@ button, input { font: inherit; }
 .shot .spot-list p {
   color: #5c564c;
 }
+
+.prep {
+  margin: 8px 0 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(138, 90, 18, 0.35);
+}
+
+.prep h5 {
+  margin: 10px 0 2px;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: #8a5a12;
+}
+
+.prep p {
+  margin: 0;
+  line-height: 1.55;
+}
 .track li span {
   color: var(--ink);
   font-size: 0.86rem;

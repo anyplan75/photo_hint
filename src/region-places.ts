@@ -2,7 +2,7 @@ export type SpotKind = 'coast' | 'oreum' | 'harbor' | 'field' | 'cliff' | 'stree
 
 export type SceneChoice = '바다' | '오름' | '거리' | '사람' | '밤' | '들판' | '절벽' | '항구';
 
-export const FALLBACK_SCENES: SceneChoice[] = ['바다', '오름', '거리', '사람', '밤'];
+export const FALLBACK_SCENES: SceneChoice[] = ['바다', '오름', '들판', '거리', '사람', '밤'];
 
 export interface Spot {
   kind: SpotKind;

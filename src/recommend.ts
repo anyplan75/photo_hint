@@ -1,6 +1,6 @@
 import type { WindowKind } from './places';
 import { getDaySky, skyPosition } from './sky';
-import { formatRange } from './time';
+import { formatClock, formatRange } from './time';
 import { sampleTime, shotWindow } from './windows';
 
 export function windowName(kind: WindowKind): string {
@@ -28,17 +28,44 @@ export function aimFor(kind: WindowKind): number | null {
   return null;
 }
 
-export function recommendTime(lat: number, lng: number, kind: WindowKind, now = new Date()): string {
-  const today = shotWindow(kind, getDaySky(lat, lng, 0, 0, now));
-  if (today && today.end.getTime() > now.getTime()) {
-    return line('오늘', today, kind, lat, lng);
-  }
-  const tomorrow = shotWindow(kind, getDaySky(lat, lng, 0, 1, now));
-  if (tomorrow) return line('내일', tomorrow, kind, lat, lng);
-  return windowName(kind);
+export interface SunPlan {
+  summary: string;
+  arrive: string;
+  azimuth: number | null;
+  altitude: number | null;
 }
 
-function line(day: string, window: { start: Date; end: Date }, kind: WindowKind, lat: number, lng: number): string {
+export function sunPlan(lat: number, lng: number, kind: WindowKind, now = new Date()): SunPlan {
+  const today = shotWindow(kind, getDaySky(lat, lng, 0, 0, now));
+  if (today && today.end.getTime() > now.getTime()) return pack('오늘', today, kind, lat, lng, now);
+  const tomorrow = shotWindow(kind, getDaySky(lat, lng, 0, 1, now));
+  if (tomorrow) return pack('내일', tomorrow, kind, lat, lng, now);
+  return { summary: windowName(kind), arrive: '이 좌표에서 그 시간 창을 계산하지 못했습니다.', azimuth: null, altitude: null };
+}
+
+export function recommendTime(lat: number, lng: number, kind: WindowKind, now = new Date()): string {
+  return sunPlan(lat, lng, kind, now).summary;
+}
+
+function pack(
+  day: string,
+  window: { start: Date; end: Date },
+  kind: WindowKind,
+  lat: number,
+  lng: number,
+  now: Date,
+): SunPlan {
   const sun = skyPosition('sun', sampleTime(kind, window), lat, lng, 0);
-  return `${day} ${formatRange(window.start, window.end)} · ${windowName(kind)} · 해 방위 ${Math.round(sun.azimuth)}°`;
+  const arriveAt = new Date(window.start.getTime() - 30 * 60 * 1000);
+  const range = formatRange(window.start, window.end);
+  const arrive =
+    arriveAt.getTime() > now.getTime()
+      ? `${day} ${formatClock(arriveAt)}에 도착합니다. 창은 ${range}입니다.`
+      : `창이 이미 열려 있습니다. 지금 가면 ${range} 안에 있습니다.`;
+  return {
+    summary: `${day} ${range} · ${windowName(kind)} · 해 방위 ${Math.round(sun.azimuth)}°`,
+    arrive,
+    azimuth: Math.round(sun.azimuth),
+    altitude: Math.round(sun.altitude * 10) / 10,
+  };
 }
