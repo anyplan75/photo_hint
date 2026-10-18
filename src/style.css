@@ -32,7 +32,18 @@ button, input { font: inherit; }
   width: min(440px, 100%);
   margin: 0 auto;
   padding: calc(20px + env(safe-area-inset-top)) 16px calc(36px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
 }
+
+.side-column { display: contents; }
+.mast { order: 0; }
+.region-panel { order: 1; }
+.map-stage { order: 2; }
+#weekly-pick { order: 3; }
+.favorites { order: 4; }
+.empty-region { order: 3; }
+.map-empty { display: none; }
 
 .mast h1 {
   margin: 4px 0 8px;
@@ -256,8 +267,32 @@ button, input { font: inherit; }
   border-top: 1px solid var(--line);
 }
 
-.shoot-map { margin-top: 18px; }
+.shoot-map { margin-top: 18px; display: flex; flex-direction: column; min-height: 0; }
+.map-frame { position: relative; margin-top: 12px; min-height: 0; }
 .map-canvas { height: 420px; border-radius: 16px; overflow: hidden; background: #d7d0c4; }
+.view-switch {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(16, 20, 28, 0.9);
+  border: 1px solid rgba(246, 241, 230, 0.22);
+}
+.view-switch button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+.view-switch button.on { background: var(--gold); color: var(--gold-ink); }
 .map-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 8px 0 0; font-size: 0.86rem; }
 .map-pin {
   width: 16px;
@@ -551,6 +586,41 @@ button:focus-visible, input:focus-visible {
   color: var(--ink);
   line-height: 1.45;
   word-break: keep-all;
+}
+
+@media (min-width: 960px) {
+  html, body { height: 100%; overflow: hidden; }
+  .app {
+    width: 100%;
+    max-width: none;
+    height: 100dvh;
+    margin: 0;
+    padding: 16px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+    gap: 16px;
+    overflow: hidden;
+  }
+  .map-stage { order: 0; min-width: 0; min-height: 0; height: 100%; }
+  .map-empty {
+    display: flex;
+    height: 100%;
+    margin: 0;
+    align-items: center;
+  }
+  .side-column {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+  }
+  .mast h1 { font-size: 1.7rem; }
+  .lede { margin-bottom: 12px; }
+  .shoot-map.panel { height: 100%; margin-top: 0; }
+  .map-frame { flex: 1 1 auto; display: flex; }
+  .map-frame .map-canvas { height: 100%; min-height: 280px; flex: 1 1 auto; }
 }
 
 .spot-map,

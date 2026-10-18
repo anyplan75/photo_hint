@@ -172,13 +172,33 @@ export function App() {
 
   return (
     <main className="app">
+      <section className="map-stage" aria-label="지도 영역">
+        {region ? (
+          <ShootMap
+            region={region.name}
+            center={region.lat !== null && region.lng !== null ? { lat: region.lat, lng: region.lng } : null}
+            spots={weeklySpots}
+            activeOsm={weeklyActive}
+            onSelect={setWeeklyOsm}
+          />
+        ) : (
+          <section className="shoot-map panel map-empty" data-map="waiting">
+            <div className="panel-head">
+              <h2>지도</h2>
+              <p>지역을 정하면 그 자리의 지도가 이 큰 화면에 열립니다.</p>
+            </div>
+          </section>
+        )}
+      </section>
+
+      <div className="side-column">
       <header className="mast">
         <p className="mark">촬영 참고</p>
         <h1>그때 그자리</h1>
         <p className="lede">지역을 정하면, 그 지역의 실제 자리와 해의 시간을 골라 줍니다.</p>
       </header>
 
-      <section className="panel" aria-labelledby="region-title">
+      <section className="panel region-panel" aria-labelledby="region-title">
         <div className="panel-head">
           <h2 id="region-title">지역</h2>
           <p>브라우저에만 남습니다. 계정은 없습니다.</p>
@@ -211,13 +231,6 @@ export function App() {
 
       {region ? (
         <>
-          <ShootMap
-            region={region.name}
-            center={region.lat !== null && region.lng !== null ? { lat: region.lat, lng: region.lng } : null}
-            spots={weeklySpots}
-            activeOsm={weeklyActive}
-            onSelect={setWeeklyOsm}
-          />
           <WeeklyCard
             pick={pick}
             scene={weeklyScene}
@@ -269,8 +282,9 @@ export function App() {
           </section>
         </>
       ) : (
-        <p className="note">지역을 정하면 이번 주 링크와, 그 지역에서 시도할 자리가 나옵니다.</p>
+        <p className="note empty-region">지역을 정하면 이번 주 링크와, 그 지역에서 시도할 자리가 나옵니다.</p>
       )}
+      </div>
     </main>
   );
 }

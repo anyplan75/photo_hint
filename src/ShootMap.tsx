@@ -5,6 +5,11 @@ import { mapboxPublicToken } from './mapbox-token';
 import type { RankedSpot } from './region-places';
 import { addShootPoint, loadShootPoints, removeShootPoint, type ShootPoint } from './shoot-points';
 
+type MapView = '2d' | '3d';
+
+const DEM_SOURCE = 'geuttae-dem';
+const BUILDINGS_LAYER = 'geuttae-3d-buildings';
+
 export function ShootMap({
   region,
   center,
@@ -28,6 +33,11 @@ export function ShootMap({
   const [points, setPoints] = useState<ShootPoint[]>(() => loadShootPoints(region));
   const [draft, setDraft] = useState<{ lat: number; lng: number } | null>(null);
   const [name, setName] = useState('');
+  const [view, setView] = useState<MapView>('2d');
+  const [pitch, setPitch] = useState(0);
+  const viewRef = useRef<MapView>('2d');
+  const viewReady = useRef(false);
+  viewRef.current = view;
 
   useEffect(() => {
     setPoints(loadShootPoints(region));
@@ -37,17 +47,19 @@ export function ShootMap({
   }, [region]);
 
   useEffect(() => {
-    if (!token || !canvas.current) return;
+    const element = canvas.current;
+    if (!token || !element) return;
     mapboxgl.accessToken = token;
     const map = new mapboxgl.Map({
       accessToken: token,
-      container: canvas.current,
+      container: element,
       style: 'mapbox://styles/mapbox/outdoors-v12',
       center: center ? [center.lng, center.lat] : [126.55, 33.38],
       zoom: center ? 9 : 8,
       attributionControl: true,
     });
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
+    map.on('pitch', () => setPitch(Math.round(map.getPitch())));
     map.on('click', (event) => {
       const target = event.originalEvent.target;
       if (target instanceof Element && target.closest('.map-pin')) return;
@@ -55,15 +67,34 @@ export function ShootMap({
       setName('');
     });
     mapRef.current = map;
+    viewReady.current = false;
+    const observer = new ResizeObserver(() => map.resize());
+    observer.observe(element);
     const frame = window.requestAnimationFrame(() => map.resize());
     return () => {
       window.cancelAnimationFrame(frame);
+      observer.disconnect();
       markersRef.current.forEach((marker) => marker.remove());
       markersRef.current = [];
       map.remove();
       mapRef.current = null;
     };
   }, [token]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !token) return;
+    const apply = () => {
+      const animate = viewReady.current;
+      viewReady.current = true;
+      applyView(map, viewRef.current, animate);
+    };
+    if (map.isStyleLoaded()) apply();
+    else map.once('load', apply);
+    return () => {
+      map.off('load', apply);
+    };
+  }, [token, view]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -86,8 +117,10 @@ export function ShootMap({
       const fitKey = `${region}:${spots.map((spot) => spot.osm).join(',')}:${points.map((point) => point.id).join(',')}`;
       if (fitted.current !== fitKey) {
         fitted.current = fitKey;
-        if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 48, maxZoom: 11, duration: 0 });
-        else if (center) map.jumpTo({ center: [center.lng, center.lat], zoom: 9 });
+        const tilted = viewRef.current === '3d';
+        const camera = tilted ? { pitch: 60, bearing: -17 } : { pitch: 0, bearing: 0 };
+        if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 48, maxZoom: 11, duration: 0, ...camera });
+        else if (center) map.jumpTo({ center: [center.lng, center.lat], zoom: 9, ...camera });
       }
     };
     if (map.isStyleLoaded()) draw();
@@ -115,14 +148,30 @@ export function ShootMap({
   }
 
   return (
-    <section className="shoot-map panel" aria-labelledby="map-title" data-map={token ? 'ready' : 'missing'}>
+    <section
+      className="shoot-map panel"
+      aria-labelledby="map-title"
+      data-map={token ? 'ready' : 'missing'}
+      data-map-view={view}
+      data-map-pitch={pitch}
+    >
       <div className="panel-head">
         <h2 id="map-title">지도</h2>
         <p>추천 장소와 이번 주 선정, 직접 남긴 촬영 지점입니다.</p>
       </div>
       {token ? (
         <>
-          <div ref={canvas} className="map-canvas" data-map-canvas />
+          <div className="map-frame">
+            <div ref={canvas} className="map-canvas" data-map-canvas data-terrain={view === '3d' ? 'on' : 'off'} />
+            <div className="view-switch" role="group" aria-label="지도 보기">
+              <button type="button" data-view="2d" aria-pressed={view === '2d'} className={view === '2d' ? 'on' : ''} onClick={() => setView('2d')}>
+                2D 평면
+              </button>
+              <button type="button" data-view="3d" aria-pressed={view === '3d'} className={view === '3d' ? 'on' : ''} onClick={() => setView('3d')}>
+                3D 입체
+              </button>
+            </div>
+          </div>
           <p className="note">지도를 누르면 촬영 지점을 남길 수 있습니다. 이 브라우저에만 저장되고, 계정은 없습니다.</p>
           <p className="map-legend">
             <span className="map-pin weekly" aria-hidden="true" /> 이번 주 선정
@@ -169,6 +218,91 @@ export function ShootMap({
       )}
     </section>
   );
+}
+
+/** 평면은 위에서 내려다보는 지도이고, 입체는 기울인 지형과 건물입니다. 핀은 둘 다 남습니다. */
+function applyView(map: mapboxgl.Map, view: MapView, animate: boolean): void {
+  if (!map.getSource(DEM_SOURCE)) {
+    map.addSource(DEM_SOURCE, {
+      type: 'raster-dem',
+      url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+      tileSize: 512,
+      maxzoom: 14,
+    });
+  }
+  const duration = animate ? (view === '3d' ? 650 : 450) : 0;
+  if (view === '3d') {
+    map.dragRotate.enable();
+    map.touchZoomRotate.enableRotation();
+    map.setTerrain({ source: DEM_SOURCE, exaggeration: 1.4 });
+    showBuildings(map);
+    map.setFog({
+      color: 'rgb(232, 226, 214)',
+      'high-color': 'rgb(176, 198, 224)',
+      'horizon-blend': 0.08,
+      'space-color': 'rgb(156, 178, 208)',
+      'star-intensity': 0,
+    });
+    map.easeTo({ pitch: 60, bearing: -17, duration });
+    map.getContainer().dataset.buildings = map.getLayer(BUILDINGS_LAYER) ? 'on' : 'off';
+    return;
+  }
+  map.dragRotate.disable();
+  map.touchZoomRotate.disableRotation();
+  map.setTerrain(null);
+  hideBuildings(map);
+  map.setFog(null);
+  map.easeTo({ pitch: 0, bearing: 0, duration });
+  map.getContainer().dataset.buildings = 'off';
+}
+
+function extrusionIds(map: mapboxgl.Map): string[] {
+  return (map.getStyle()?.layers ?? [])
+    .filter((layer) => layer.type === 'fill-extrusion' && 'source-layer' in layer && layer['source-layer'] === 'building')
+    .map((layer) => layer.id);
+}
+
+function showBuildings(map: mapboxgl.Map): void {
+  const existing = extrusionIds(map);
+  if (existing.length > 0) {
+    for (const id of existing) map.setLayoutProperty(id, 'visibility', 'visible');
+    return;
+  }
+  const layers = map.getStyle()?.layers ?? [];
+  const withBuildings = layers.find((layer) => 'source-layer' in layer && layer['source-layer'] === 'building' && 'source' in layer);
+  const source =
+    withBuildings && 'source' in withBuildings && typeof withBuildings.source === 'string'
+      ? withBuildings.source
+      : map.getSource('composite')
+        ? 'composite'
+        : null;
+  if (!source) return;
+  const labelLayerId = layers.find((layer) => layer.type === 'symbol' && layer.layout && 'text-field' in layer.layout)?.id;
+  try {
+    map.addLayer(
+      {
+        id: BUILDINGS_LAYER,
+        source,
+        'source-layer': 'building',
+        filter: ['any', ['==', ['get', 'extrude'], true], ['==', ['get', 'extrude'], 'true']],
+        type: 'fill-extrusion',
+        minzoom: 14,
+        paint: {
+          'fill-extrusion-color': '#d7d0c4',
+          'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 14.05, ['get', 'height']],
+          'fill-extrusion-base': ['get', 'min_height'],
+          'fill-extrusion-opacity': 0.75,
+        },
+      },
+      labelLayerId,
+    );
+  } catch {
+    // 이 지도 스타일에 건물 층이 없으면 지형만 기울입니다.
+  }
+}
+
+function hideBuildings(map: mapboxgl.Map): void {
+  for (const id of extrusionIds(map)) map.setLayoutProperty(id, 'visibility', 'none');
 }
 
 function placeMarker(map: mapboxgl.Map, spot: RankedSpot, weekly: boolean, onSelect: (osm: string) => void): mapboxgl.Marker {

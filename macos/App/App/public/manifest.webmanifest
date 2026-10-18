@@ -1,0 +1,25 @@
+{
+  "name": "그때 그자리",
+  "short_name": "그때 그자리",
+  "description": "지역을 정하면, 시도해 볼 사진과 그 자리·시간을 골라 줍니다.",
+  "start_url": "/photo_hint/",
+  "scope": "/photo_hint/",
+  "display": "standalone",
+  "background_color": "#10141c",
+  "theme_color": "#10141c",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "/photo_hint/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/photo_hint/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

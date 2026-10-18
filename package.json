@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "build:ios": "CAPACITOR=1 tsc --noEmit && CAPACITOR=1 vite build && cap sync ios",
+    "build:mac": "MACOS=1 tsc --noEmit && MACOS=1 vite build && node scripts/sync-macos.mjs",
     "preview": "vite preview",
     "check": "tsx scripts/check-sky.ts"
   },
