@@ -4,7 +4,10 @@ import WebKit
 /// 앱이 꺼지지 않도록 대리자를 여기에 붙잡아 둡니다.
 private let appDelegate = AppDelegate()
 
-/// 맥의 큰 창에서, 이미 만든 웹 화면을 그대로 엽니다.
+/// 로그인 주소는 웹사이트와 같습니다. file 주소에서는 Firebase 로그인이 막힙니다.
+private let site = URL(string: "https://anyplan75.github.io/photo_hint/")!
+
+/// 맥의 큰 창에서 웹사이트를 엽니다. 큰 화면 배치와 2D/3D 전환은 그 페이지에 있습니다.
 @main
 enum AppMain {
     static func main() {
@@ -15,7 +18,7 @@ enum AppMain {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var window: NSWindow?
     private var webView: WKWebView?
 
@@ -34,12 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameAutosaveName("GeuttaeMainWindow")
         window.backgroundColor = NSColor(srgbRed: 16 / 255, green: 20 / 255, blue: 28 / 255, alpha: 1)
 
-        // 묶음 속 화면은 file 주소입니다. 이 허용이 없으면 스타일과 모듈 스크립트가 막혀 창이 하얗게 남습니다.
-        let configuration = WKWebViewConfiguration()
-        configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-        configuration.setValue(true, forKey: "allowUniversalAccessFromFileURLs")
-
-        let web = WKWebView(frame: .zero, configuration: configuration)
+        let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        web.navigationDelegate = self
         web.translatesAutoresizingMaskIntoConstraints = false
         web.underPageBackgroundColor = window.backgroundColor
         if let content = window.contentView {
@@ -51,15 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 web.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             ])
         }
-
-        if let page = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "public") {
-            web.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
-        } else {
-            web.loadHTMLString(
-                "<p style='font-family:sans-serif;padding:24px'>화면 파일을 찾지 못했습니다. 터미널에서 npm run build:mac 을 다시 실행하세요.</p>",
-                baseURL: nil
-            )
-        }
+        web.load(URLRequest(url: site))
 
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -72,7 +63,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.webView = web
     }
 
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        showOffline(webView, error: error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        showOffline(webView, error: error)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    /// 연결이 끊긴 경우에만 짧은 안내를 보여 창이 하얗게 남지 않게 합니다.
+    private func showOffline(_ webView: WKWebView, error: Error) {
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            return
+        }
+        webView.loadHTMLString(
+            "<p style='font-family:sans-serif;padding:24px;color:#f6f1e6;background:#10141c'>웹사이트에 연결하지 못했습니다. 인터넷을 확인한 뒤 앱을 다시 여세요.</p>",
+            baseURL: nil
+        )
     }
 }

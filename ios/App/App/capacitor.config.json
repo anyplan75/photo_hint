@@ -2,6 +2,10 @@
 	"appId": "com.anyplan75.geuttae",
 	"appName": "그때 그자리",
 	"webDir": "dist",
+	"server": {
+		"url": "https://anyplan75.github.io/photo_hint/",
+		"cleartext": false
+	},
 	"ios": {
 		"contentInset": "automatic",
 		"backgroundColor": "#10141c"
