@@ -34,9 +34,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameAutosaveName("GeuttaeMainWindow")
         window.backgroundColor = NSColor(srgbRed: 16 / 255, green: 20 / 255, blue: 28 / 255, alpha: 1)
 
-        let web = WKWebView(frame: window.contentView?.bounds ?? .zero, configuration: WKWebViewConfiguration())
-        web.autoresizingMask = [.width, .height]
-        window.contentView?.addSubview(web)
+        // 묶음 속 화면은 file 주소입니다. 이 허용이 없으면 스타일과 모듈 스크립트가 막혀 창이 하얗게 남습니다.
+        let configuration = WKWebViewConfiguration()
+        configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+        configuration.setValue(true, forKey: "allowUniversalAccessFromFileURLs")
+
+        let web = WKWebView(frame: .zero, configuration: configuration)
+        web.translatesAutoresizingMaskIntoConstraints = false
+        web.underPageBackgroundColor = window.backgroundColor
+        if let content = window.contentView {
+            content.addSubview(web)
+            NSLayoutConstraint.activate([
+                web.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+                web.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+                web.topAnchor.constraint(equalTo: content.topAnchor),
+                web.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            ])
+        }
 
         if let page = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "public") {
             web.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
