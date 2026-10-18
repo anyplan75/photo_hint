@@ -14,6 +14,8 @@ import {
   type SceneChoice,
   type Spot,
 } from './region-places';
+import { AccountPanel } from './AccountPanel';
+import { useSession } from './session';
 import { ShootMap } from './ShootMap';
 import { searchPlaces } from './search';
 import { SOURCE_NAME, parseReferenceAddress, referenceKey } from './sources';
@@ -167,6 +169,7 @@ export function App() {
     setReferences(next);
   }
 
+  const session = useSession();
   const waiting = Boolean(region && !checked && remoteState === 'loading');
   const missing = Boolean(region && !checked && remoteState === 'missing');
 
@@ -180,6 +183,8 @@ export function App() {
             spots={weeklySpots}
             activeOsm={weeklyActive}
             onSelect={setWeeklyOsm}
+            sessionReady={session.ready}
+            uid={session.uid}
           />
         ) : (
           <section className="shoot-map panel map-empty" data-map="waiting">
@@ -198,10 +203,12 @@ export function App() {
         <p className="lede">지역을 정하면, 그 지역의 실제 자리와 해의 시간을 골라 줍니다.</p>
       </header>
 
+      <AccountPanel session={session} />
+
       <section className="panel region-panel" aria-labelledby="region-title">
         <div className="panel-head">
           <h2 id="region-title">지역</h2>
-          <p>브라우저에만 남습니다. 계정은 없습니다.</p>
+          <p>지역 이름은 이 브라우저에 남습니다. 지도에 저장한 촬영 지점은 로그인한 계정으로 맞춰집니다.</p>
         </div>
         {region && (
           <p className="where-kicker" data-region={region.name}>

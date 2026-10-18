@@ -2,6 +2,13 @@ node_modules
 dist
 .DS_Store
 *.local
+.env
+.env.*
+!.env.example
+.firebase
+firebase-debug.log
+*-debug.log
+ui-debug.log
 .vite
 ios/App/Pods/
 ios/App/build/

@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 기본은 모두 거부입니다. 아래에서 연 경로만 허용합니다.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 자료 모양
+    // 묶음 이름: photo_hint_shoot_points / {사용자 아이디} / points / {지점 아이디}
+    // 이 이름은 [photo_hint]_ 촬영 지점 묶음입니다. 규칙 문법이 한글과 대괄호를 경로로 받지 않아 영문으로 둡니다.
+    // 필드:
+    //   id: 문자열, 문서 아이디와 같음, 1~80자, 만든 뒤 바꾸지 않음
+    //   region: 문자열, 1~80자
+    //   name: 문자열, 1~80자
+    //   lat: 숫자, -90~90
+    //   lng: 숫자, -180~180
+    //   savedAt: 타임스탬프, 만든 뒤 바꾸지 않음
+    //   note: 문자열, 없어도 됨, 500자 이하
+    match /photo_hint_shoot_points/{userId}/points/{pointId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidPlace(pointId);
+      allow update: if isOwner(userId) && isValidPlace(pointId) && keptIdentity();
+      allow delete: if isOwner(userId);
+    }
+  }
+}
+
+function isSignedIn() {
+  return request.auth != null;
+}
+
+function isOwner(userId) {
+  return isSignedIn() && request.auth.uid == userId;
+}
+
+function validLabel(value) {
+  return value is string && value.size() > 0 && value.size() <= 80;
+}
+
+function validNote(data) {
+  return !('note' in data) || (data.note is string && data.note.size() <= 500);
+}
+
+function isValidPlace(pointId) {
+  let data = request.resource.data;
+  return data.keys().hasOnly(['id', 'region', 'name', 'lat', 'lng', 'savedAt', 'note'])
+    && data.keys().hasAll(['id', 'region', 'name', 'lat', 'lng', 'savedAt'])
+    && data.id is string
+    && data.id == pointId
+    && data.id.size() > 0
+    && data.id.size() <= 80
+    && validLabel(data.region)
+    && validLabel(data.name)
+    && data.lat is number
+    && data.lat >= -90
+    && data.lat <= 90
+    && data.lng is number
+    && data.lng >= -180
+    && data.lng <= 180
+    && data.savedAt is timestamp
+    && validNote(data);
+}
+
+function keptIdentity() {
+  return request.resource.data.id == resource.data.id
+    && request.resource.data.savedAt == resource.data.savedAt;
+}

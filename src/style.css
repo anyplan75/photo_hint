@@ -293,6 +293,18 @@ button, input { font: inherit; }
   cursor: pointer;
 }
 .view-switch button.on { background: var(--gold); color: var(--gold-ink); }
+.account-switch { position: static; width: fit-content; margin-top: 12px; }
+.account-fields { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.account-fields label { color: var(--muted); font-size: 0.86rem; }
+.account-fields input {
+  min-height: 48px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #10141c;
+  color: var(--ink);
+}
+.account-panel .ghost.slim { margin-top: 12px; }
 .map-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 8px 0 0; font-size: 0.86rem; }
 .map-pin {
   width: 16px;

@@ -3,7 +3,8 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { mapboxPublicToken } from './mapbox-token';
 import type { RankedSpot } from './region-places';
-import { addShootPoint, loadShootPoints, removeShootPoint, type ShootPoint } from './shoot-points';
+import type { ShootPoint } from './shoot-points';
+import { useSyncedShootPoints } from './use-shoot-points';
 
 type MapView = '2d' | '3d';
 
@@ -16,12 +17,16 @@ export function ShootMap({
   spots,
   activeOsm,
   onSelect,
+  sessionReady,
+  uid,
 }: {
   region: string;
   center: { lat: number; lng: number } | null;
   spots: RankedSpot[];
   activeOsm: string;
   onSelect: (osm: string) => void;
+  sessionReady: boolean;
+  uid: string | null;
 }) {
   const token = mapboxPublicToken();
   const canvas = useRef<HTMLDivElement>(null);
@@ -30,9 +35,10 @@ export function ShootMap({
   const onSelectRef = useRef(onSelect);
   const fitted = useRef('');
   onSelectRef.current = onSelect;
-  const [points, setPoints] = useState<ShootPoint[]>(() => loadShootPoints(region));
+  const { points, mode, error: syncError, addPoint, removePoint } = useSyncedShootPoints(region, uid, sessionReady);
   const [draft, setDraft] = useState<{ lat: number; lng: number } | null>(null);
   const [name, setName] = useState('');
+  const [pointError, setPointError] = useState<string | null>(null);
   const [view, setView] = useState<MapView>('2d');
   const [pitch, setPitch] = useState(0);
   const viewRef = useRef<MapView>('2d');
@@ -40,9 +46,9 @@ export function ShootMap({
   viewRef.current = view;
 
   useEffect(() => {
-    setPoints(loadShootPoints(region));
     setDraft(null);
     setName('');
+    setPointError(null);
     fitted.current = '';
   }, [region]);
 
@@ -130,7 +136,7 @@ export function ShootMap({
     };
   }, [token, region, center, spots, activeOsm, points, draft]);
 
-  function savePoint(event: FormEvent) {
+  async function savePoint(event: FormEvent) {
     event.preventDefault();
     const trimmed = name.trim();
     if (!draft || !trimmed) return;
@@ -142,9 +148,14 @@ export function ShootMap({
       lng: draft.lng,
       savedAt: new Date().toISOString(),
     };
-    setPoints(addShootPoint(point));
-    setDraft(null);
-    setName('');
+    try {
+      await addPoint(point);
+      setDraft(null);
+      setName('');
+      setPointError(null);
+    } catch {
+      setPointError('계정에 저장하지 못했습니다. 다시 시도해 주세요.');
+    }
   }
 
   return (
@@ -154,6 +165,7 @@ export function ShootMap({
       data-map={token ? 'ready' : 'missing'}
       data-map-view={view}
       data-map-pitch={pitch}
+      data-sync={mode}
     >
       <div className="panel-head">
         <h2 id="map-title">지도</h2>
@@ -172,7 +184,7 @@ export function ShootMap({
               </button>
             </div>
           </div>
-          <p className="note">지도를 누르면 촬영 지점을 남길 수 있습니다. 이 브라우저에만 저장되고, 계정은 없습니다.</p>
+          <p className="note">{syncNote(mode)}</p>
           <p className="map-legend">
             <span className="map-pin weekly" aria-hidden="true" /> 이번 주 선정
             <span className="map-pin" aria-hidden="true" /> 추천 장소
@@ -200,6 +212,7 @@ export function ShootMap({
               </button>
             </form>
           )}
+          {(pointError || syncError) && <p className="note error">{pointError || syncError}</p>}
         </>
       ) : (
         <p data-map-note>지도를 표시하려면 Mapbox 공개 토큰이 필요합니다.</p>
@@ -209,7 +222,7 @@ export function ShootMap({
           {points.map((point) => (
             <li key={point.id} data-user-point={point.name}>
               <span>{point.name}</span>
-              <button type="button" onClick={() => setPoints(removeShootPoint(region, point.id))}>
+              <button type="button" onClick={() => void removePoint(point.id)}>
                 빼기
               </button>
             </li>
@@ -303,6 +316,13 @@ function showBuildings(map: mapboxgl.Map): void {
 
 function hideBuildings(map: mapboxgl.Map): void {
   for (const id of extrusionIds(map)) map.setLayoutProperty(id, 'visibility', 'none');
+}
+
+function syncNote(mode: 'local' | 'syncing' | 'synced' | 'error'): string {
+  if (mode === 'synced') return '저장한 지점은 이 계정에 올라갑니다. 같은 아이디로 맥, 아이폰, 웹사이트에서 보입니다.';
+  if (mode === 'syncing') return '계정에 저장된 촬영 지점을 맞추는 중입니다.';
+  if (mode === 'error') return '계정과 맞추지 못했습니다. 로그인하지 않은 복사본은 계정을 덮어쓰지 않습니다.';
+  return '로그인하지 않으면 이 브라우저에만 남습니다. 이렇게 남긴 복사본은 계정을 덮어쓰지 않습니다.';
 }
 
 function placeMarker(map: mapboxgl.Map, spot: RankedSpot, weekly: boolean, onSelect: (osm: string) => void): mapboxgl.Marker {
