@@ -183,6 +183,10 @@ export function App() {
             spots={weeklySpots}
             activeOsm={weeklyActive}
             onSelect={setWeeklyOsm}
+            scene={weeklyScene}
+            basis={pick.basis}
+            windowKind={weeklyWindow}
+            now={now}
             sessionReady={session.ready}
             uid={session.uid}
           />

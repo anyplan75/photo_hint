@@ -324,9 +324,50 @@ button, input { font: inherit; }
 }
 .map-pin.mine { background: #1f6f68; border-radius: 3px; }
 .map-pin.draft { background: #fff; border-color: #c9842a; }
+.map-pin.picked { box-shadow: 0 0 0 4px rgba(230, 177, 90, 0.95); }
+.map-info {
+  position: absolute;
+  z-index: 3;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  max-height: min(82%, 720px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px 14px 16px;
+  border-radius: 16px;
+  background: var(--cream);
+  color: #221e18;
+  box-shadow: 0 10px 28px rgba(16, 20, 28, 0.28);
+  scroll-margin: 12px;
+}
+.map-info:focus { outline: 2px solid rgba(201, 132, 42, 0.8); outline-offset: 2px; }
+.map-info-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.map-info-kicker { margin: 0; color: #8a5a12; font-size: 0.78rem; font-weight: 700; }
+.map-info h3 { margin: 2px 0 0; font-size: 1.25rem; letter-spacing: -0.03em; }
+.map-info-close {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(138, 90, 18, 0.12);
+  color: #8a5a12;
+  font-weight: 700;
+  cursor: pointer;
+}
+.map-info p { margin: 8px 0 0; line-height: 1.55; word-break: keep-all; }
+.map-info .dim { color: #6d675c; font-size: 0.86rem; }
+.map-info .prep { margin-top: 12px; }
+.map-info .prep h4 { margin: 0; font-size: 0.95rem; }
+@media (max-width: 959px) {
+  .map-frame:has(.map-info) .map-canvas { height: 860px; }
+  .map-info { max-height: min(78%, 680px); }
+}
 .user-points { list-style: none; margin: 10px 0 0; padding: 0; }
 .user-points li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid rgba(34, 30, 24, 0.14); }
 .user-points button { border: 0; background: transparent; color: #8a5a12; font-weight: 700; cursor: pointer; }
+.user-points .point-name { color: inherit; padding: 0; text-align: left; }
 
 .spot-list {
   list-style: none;
