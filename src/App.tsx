@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { describeAdded, weeklyPick, windowForScene, type ReferenceBrief } from './catalog';
 import { shootingGuide } from './guide';
 import { aimFor, recommendTime, sunPlan } from './recommend';
@@ -15,8 +15,9 @@ import {
   type Spot,
 } from './region-places';
 import { AccountPanel } from './AccountPanel';
+import { GuidePanel } from './GuidePanel';
 import { useSession } from './session';
-import { ShootMap } from './ShootMap';
+import { ShootMap, type SelectionView } from './ShootMap';
 import { searchPlaces } from './search';
 import { SOURCE_NAME, parseReferenceAddress, referenceKey } from './sources';
 import {
@@ -172,9 +173,50 @@ export function App() {
   const session = useSession();
   const waiting = Boolean(region && !checked && remoteState === 'loading');
   const missing = Boolean(region && !checked && remoteState === 'missing');
+  const [shelf, setShelf] = useState<Shelf>('guide');
+  const [mapView, setMapView] = useState<SelectionView | null>(null);
+  const [dismissPoint, setDismissPoint] = useState(0);
+  const rememberView = useCallback((view: SelectionView | null) => {
+    setMapView((current) => (viewKey(current) === viewKey(view) ? current : view));
+  }, []);
+
+  useEffect(() => {
+    if (!region) setShelf('region');
+  }, [region]);
+
+  function toggleShelf(next: Shelf) {
+    setShelf((current) => (current === next ? 'guide' : next));
+  }
 
   return (
     <main className="app">
+      <header className="chrome">
+        <div className="brand">
+          <p className="mark">촬영 참고</p>
+          <h1>그때 그자리</h1>
+        </div>
+        <nav className="chrome-nav" aria-label="화면 이동">
+          <button type="button" className={shelf === 'guide' ? 'on' : ''} aria-pressed={shelf === 'guide'} onClick={() => toggleShelf('guide')}>
+            안내
+          </button>
+          <button type="button" className={shelf === 'account' ? 'on' : ''} aria-pressed={shelf === 'account'} onClick={() => toggleShelf('account')}>
+            계정
+          </button>
+          <button
+            type="button"
+            className={shelf === 'region' ? 'on' : ''}
+            aria-pressed={shelf === 'region'}
+            aria-label={region ? `지역, ${region.name}` : '지역'}
+            onClick={() => toggleShelf('region')}
+          >
+            {region ? region.name : '지역'}
+          </button>
+          <button type="button" className={shelf === 'week' ? 'on' : ''} aria-pressed={shelf === 'week'} onClick={() => toggleShelf('week')}>
+            이번 주
+          </button>
+        </nav>
+      </header>
+
       <section className="map-stage" aria-label="지도 영역">
         {region ? (
           <ShootMap
@@ -189,26 +231,24 @@ export function App() {
             now={now}
             sessionReady={session.ready}
             uid={session.uid}
+            onView={rememberView}
+            onOpenGuide={() => setShelf('guide')}
+            dismissPoint={dismissPoint}
           />
         ) : (
           <section className="shoot-map panel map-empty" data-map="waiting">
             <div className="panel-head">
               <h2>지도</h2>
-              <p>지역을 정하면 그 자리의 지도가 이 큰 화면에 열립니다.</p>
+              <p>지역을 정하면 그 자리의 지도가 이 화면에 남습니다.</p>
             </div>
           </section>
         )}
       </section>
 
-      <div className="side-column">
-      <header className="mast">
-        <p className="mark">촬영 참고</p>
-        <h1>그때 그자리</h1>
-        <p className="lede">지역을 정하면, 그 지역의 실제 자리와 해의 시간을 골라 줍니다.</p>
-      </header>
+      <section className="read-shelf" aria-label="안내와 설정" data-shelf={shelf}>
+      {shelf === 'account' && <AccountPanel session={session} />}
 
-      <AccountPanel session={session} />
-
+      {shelf === 'region' && (
       <section className="panel region-panel" aria-labelledby="region-title">
         <div className="panel-head">
           <h2 id="region-title">지역</h2>
@@ -239,8 +279,9 @@ export function App() {
         </form>
         {regionError && <p className="note error">{regionError}</p>}
       </section>
+      )}
 
-      {region ? (
+      {shelf === 'week' && (region ? (
         <>
           <WeeklyCard
             pick={pick}
@@ -251,7 +292,10 @@ export function App() {
             missing={missing}
             selectedOsm={weeklyActive}
             onChoose={setWeeklyChoice}
-            onSelect={setWeeklyOsm}
+            onSelect={(osm) => {
+              setWeeklyOsm(osm);
+              setShelf('guide');
+            }}
           />
           <section className="favorites" aria-labelledby="add-title">
             <h2 id="add-title">페이지 주소로 추가</h2>
@@ -294,10 +338,39 @@ export function App() {
         </>
       ) : (
         <p className="note empty-region">지역을 정하면 이번 주 링크와, 그 지역에서 시도할 자리가 나옵니다.</p>
+      ))}
+
+      {shelf === 'guide' && (
+        mapView ? (
+          <GuidePanel
+            kicker={mapView.roleLabel}
+            name={mapView.name}
+            address={mapView.address}
+            time={mapView.time}
+            coords={mapView.coords}
+            lead={mapView.guide.lead}
+            blocks={mapView.guide.blocks}
+            role={mapView.role}
+            markSelection
+            onClose={mapView.role === 'point' ? () => setDismissPoint((count) => count + 1) : undefined}
+          />
+        ) : (
+          <article className="guide-panel guide-empty">
+            <h2>안내</h2>
+            <p>{region ? '핀을 누르면 그 자리의 안내가 섹션으로 열립니다.' : '지역을 정하면 지도와 안내가 열립니다.'}</p>
+          </article>
+        )
       )}
-      </div>
+      </section>
     </main>
   );
+}
+
+type Shelf = 'guide' | 'account' | 'region' | 'week';
+
+function viewKey(view: SelectionView | null): string {
+  if (!view) return '';
+  return `${view.role}|${view.name}|${view.time}|${view.address}|${view.guide.lead}|${view.guide.blocks.map((block) => block.heading + block.body).join('|')}`;
 }
 
 function WeeklyCard({
@@ -377,7 +450,7 @@ function ReferenceCard({
           {brief.url}
         </a>
       </p>
-      <PlaceAdvice brief={brief} scene={scene} spots={spots} now={now} waiting={waiting} missing={missing} onChoose={onChoose} />
+      <PlaceAdvice brief={brief} scene={scene} spots={spots} now={now} waiting={waiting} missing={missing} onChoose={onChoose} embedGuide />
       <button className="save" type="button" onClick={onRemove}>
         빼기
       </button>
@@ -395,6 +468,7 @@ function PlaceAdvice({
   selectedOsm,
   onChoose,
   onSelect,
+  embedGuide = false,
 }: {
   brief: ReferenceBrief;
   scene: SceneChoice | null;
@@ -405,6 +479,7 @@ function PlaceAdvice({
   selectedOsm?: string;
   onChoose: (scene: SceneChoice) => void;
   onSelect?: (osm: string) => void;
+  embedGuide?: boolean;
 }) {
   const windowKind = scene ? windowForScene(scene, brief.window) : brief.window;
   const chosen = scene ? pickSpots(scene, spots, aimFor(windowKind)) : [];
@@ -443,34 +518,37 @@ function PlaceAdvice({
         <p data-place-missing>이 장면에 맞는 장소 자료를 찾지 못했습니다.</p>
       )}
       {chosen.length > 0 && (
-        <ul className="spot-list">
+        <div className="place-chips" role="group" aria-label="장소">
           {chosen.map((spot) => (
-            <li key={spot.osm} className={active === spot.osm ? 'on' : ''}>
-              <button type="button" className="spot-pick" aria-pressed={active === spot.osm} onClick={() => choose(spot.osm)}>
-                <strong data-place>{spot.name}</strong>
-                <span data-match>{matchLabel(scene as SceneChoice, spot)}</span>
-              </button>
-              <p data-address>{spot.address ?? '주소를 찾지 못했습니다.'}</p>
-              <p data-why>{whySpot(scene as SceneChoice, spot)}</p>
-              <p data-time>{recommendTime(spot.lat, spot.lng, windowKind, now)}</p>
-              <p className="dim">
-                {spot.lat.toFixed(5)}, {spot.lng.toFixed(5)} · {spot.osm}
-              </p>
-              {active === spot.osm && guide && (
-                <section className="prep" data-guide data-guide-address={spot.address ?? ''}>
-                  <h4>준비 안내</h4>
-                  <p data-guide-lead>{guide.lead}</p>
-                  {guide.blocks.map((block) => (
-                    <div key={block.heading}>
-                      <h5>{block.heading}</h5>
-                      <p>{block.body}</p>
-                    </div>
-                  ))}
-                </section>
-              )}
-            </li>
+            <button
+              key={spot.osm}
+              type="button"
+              className={active === spot.osm ? 'on' : ''}
+              aria-pressed={active === spot.osm}
+              data-place-option={spot.name}
+              onClick={() => choose(spot.osm)}
+            >
+              {spot.name}
+            </button>
           ))}
-        </ul>
+        </div>
+      )}
+      {activeSpot && scene && (
+        <>
+          <p data-match>{matchLabel(scene, activeSpot)}</p>
+          <p data-why>{whySpot(scene, activeSpot)}</p>
+        </>
+      )}
+      {embedGuide && guide && activeSpot && (
+        <GuidePanel
+          kicker={scene ?? '장면'}
+          name={activeSpot.name}
+          address={activeSpot.address ?? '주소를 찾지 못했습니다.'}
+          time={recommendTime(activeSpot.lat, activeSpot.lng, windowKind, now)}
+          coords={`${activeSpot.lat.toFixed(5)}, ${activeSpot.lng.toFixed(5)} · ${activeSpot.osm}`}
+          lead={guide.lead}
+          blocks={guide.blocks}
+        />
       )}
     </div>
   );

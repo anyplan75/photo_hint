@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { shootingGuide, type GuideBlock } from './guide';
@@ -11,7 +11,7 @@ import { useSyncedShootPoints } from './use-shoot-points';
 
 type PinSelection = { kind: 'spot'; osm: string } | { kind: 'point'; id: string };
 
-interface SelectionView {
+export interface SelectionView {
   role: 'weekly' | 'place' | 'point';
   roleLabel: string;
   name: string;
@@ -38,6 +38,9 @@ export function ShootMap({
   now,
   sessionReady,
   uid,
+  onView,
+  onOpenGuide,
+  dismissPoint = 0,
 }: {
   region: string;
   center: { lat: number; lng: number } | null;
@@ -50,6 +53,12 @@ export function ShootMap({
   now: Date;
   sessionReady: boolean;
   uid: string | null;
+  /** 고른 핀의 짧은 안내를 지도 밖 칸으로 넘깁니다. */
+  onView?: (view: SelectionView | null) => void;
+  /** 핀을 누르면 안내 칸으로 돌아갑니다. */
+  onOpenGuide?: () => void;
+  /** 저장한 지점 안내를 닫고 이번 주 자리로 돌아갑니다. */
+  dismissPoint?: number;
 }) {
   const token = mapboxPublicToken();
   const canvas = useRef<HTMLDivElement>(null);
@@ -63,8 +72,13 @@ export function ShootMap({
   const [name, setName] = useState('');
   const [pointError, setPointError] = useState<string | null>(null);
   const [selected, setSelected] = useState<PinSelection | null>(null);
-  const infoRef = useRef<HTMLElement>(null);
   const ignoreMapClick = useRef(false);
+  const onViewRef = useRef(onView);
+  const onOpenGuideRef = useRef(onOpenGuide);
+  const activeOsmRef = useRef(activeOsm);
+  onViewRef.current = onView;
+  onOpenGuideRef.current = onOpenGuide;
+  activeOsmRef.current = activeOsm;
   function holdMapClick() {
     ignoreMapClick.current = true;
     window.setTimeout(() => {
@@ -84,6 +98,21 @@ export function ShootMap({
     setSelected(null);
     fitted.current = '';
   }, [region]);
+
+  useEffect(() => {
+    if (!activeOsm) return;
+    setSelected((current) => {
+      if (current?.kind === 'point') return current;
+      if (current?.kind === 'spot' && current.osm === activeOsm) return current;
+      return { kind: 'spot', osm: activeOsm };
+    });
+  }, [activeOsm]);
+
+  useEffect(() => {
+    if (dismissPoint === 0) return;
+    const osm = activeOsmRef.current;
+    setSelected(osm ? { kind: 'spot', osm } : null);
+  }, [dismissPoint]);
 
   useEffect(() => {
     const element = canvas.current;
@@ -157,6 +186,7 @@ export function ShootMap({
             setDraft(null);
             setName('');
             onSelectRef.current(spot.osm);
+            onOpenGuideRef.current?.();
           }),
         );
       }
@@ -169,6 +199,7 @@ export function ShootMap({
             setSelected({ kind: 'point', id: point.id });
             setDraft(null);
             setName('');
+            onOpenGuideRef.current?.();
           }),
         );
       }
@@ -214,15 +245,15 @@ export function ShootMap({
   }
 
   const selectionView = describeSelection({ selected, spots, points, activeOsm, scene, basis, windowKind, now });
-  const selectionKey = selected ? (selected.kind === 'spot' ? `spot:${selected.osm}` : `point:${selected.id}`) : '';
+  const reported = selectionView
+    ? `${selectionView.role}|${selectionView.name}|${selectionView.time}|${selectionView.address}|${selectionView.guide.lead}|${selectionView.guide.blocks.map((block) => block.heading).join(',')}`
+    : '';
+  const selectionViewRef = useRef(selectionView);
+  selectionViewRef.current = selectionView;
 
   useEffect(() => {
-    const node = infoRef.current;
-    if (!node || !selectionKey) return;
-    node.focus({ preventScroll: true });
-    const wide = window.matchMedia('(min-width: 960px)').matches;
-    node.scrollIntoView({ behavior: 'smooth', block: wide ? 'nearest' : 'start' });
-  }, [selectionKey]);
+    onViewRef.current?.(selectionViewRef.current);
+  }, [reported]);
 
   return (
     <section
@@ -234,10 +265,9 @@ export function ShootMap({
       data-sync={mode}
       data-selected-place={selectionView?.name ?? ''}
     >
-      <div className="panel-head">
-        <h2 id="map-title">지도</h2>
-        <p>핀을 누르면 그 자리의 주소, 시간, 렌즈와 장비 안내가 열립니다.</p>
-      </div>
+      <h2 id="map-title" className="sr">
+        지도
+      </h2>
       {token ? (
         <>
           <div className="map-frame">
@@ -250,7 +280,6 @@ export function ShootMap({
                 3D 입체
               </button>
             </div>
-            {selectionView && <MapSelectionCard view={selectionView} cardRef={infoRef} onClose={() => setSelected(null)} />}
           </div>
           <p className="note">{syncNote(mode)}</p>
           <p className="map-legend">
@@ -285,7 +314,6 @@ export function ShootMap({
       ) : (
         <>
           <p data-map-note>지도를 표시하려면 Mapbox 공개 토큰이 필요합니다.</p>
-          {selectionView && <MapSelectionCard view={selectionView} cardRef={infoRef} onClose={() => setSelected(null)} />}
         </>
       )}
       {points.length > 0 && (
@@ -300,6 +328,7 @@ export function ShootMap({
                   setSelected({ kind: 'point', id: point.id });
                   setDraft(null);
                   setName('');
+                  onOpenGuide?.();
                 }}
               >
                 {point.name}
@@ -529,49 +558,3 @@ function describeSelection({
   };
 }
 
-function MapSelectionCard({
-  view,
-  cardRef,
-  onClose,
-}: {
-  view: SelectionView;
-  cardRef: RefObject<HTMLElement | null>;
-  onClose: () => void;
-}) {
-  return (
-    <article
-      ref={cardRef}
-      id="map-selection"
-      className="map-info"
-      tabIndex={-1}
-      data-map-info
-      data-map-info-role={view.role}
-      aria-labelledby="map-selection-title"
-    >
-      <div className="map-info-head">
-        <div>
-          <p className="map-info-kicker">{view.roleLabel}</p>
-          <h3 id="map-selection-title" data-place>
-            {view.name}
-          </h3>
-        </div>
-        <button type="button" className="map-info-close" onClick={onClose}>
-          닫기
-        </button>
-      </div>
-      <p data-address>{view.address}</p>
-      <p data-time>{view.time}</p>
-      <p className="dim">{view.coords}</p>
-      <section className="prep" data-guide data-guide-address={view.address}>
-        <h4>준비 안내</h4>
-        <p data-guide-lead>{view.guide.lead}</p>
-        {view.guide.blocks.map((block) => (
-          <div key={block.heading}>
-            <h5>{block.heading}</h5>
-            <p>{block.body}</p>
-          </div>
-        ))}
-      </section>
-    </article>
-  );
-}
