@@ -1,4 +1,4 @@
-# 그때 그자리
+# 여기야 여기
 
 지역을 정하면, 그 자리와 해의 시간, 준비 안내를 보여 주는 촬영 참고 앱입니다. 넓은 맥 창과 좁은 휴대폰 모두 지도가 화면에 남습니다. 고른 장소의 안내는 준비, 시간, 렌즈처럼 짧은 섹션으로 나눠 하나만 보여 줍니다. 계정, 지역, 이번 주 선정은 위쪽 버튼으로 열고, 안내 문장 사이에 끼워 넣지 않습니다.
 
@@ -23,7 +23,7 @@ npm run preview
 
 ## 아이폰
 
-같은 화면을 감싼 앱입니다. 표시 이름은 그때 그자리, 묶음 식별자는 `com.anyplan75.geuttae` 입니다. Xcode 프로젝트는 `ios/App/App.xcodeproj` 입니다.
+같은 화면을 감싼 앱입니다. 표시 이름은 여기야 여기, 아이폰과 아이패드에서 전체 화면으로 열립니다. 묶음 식별자는 `com.anyplan75.geuttae` 입니다. Xcode 프로젝트는 `ios/App/App.xcodeproj` 입니다.
 
 ```bash
 npm run build:ios
@@ -31,7 +31,7 @@ npm run build:ios
 
 ## 맥
 
-같은 화면을 큰 창으로 여는 맥 앱입니다. 프로젝트는 `macos/App/App.xcodeproj` 입니다. 표시 이름은 그때 그자리, 묶음 식별자는 `com.anyplan75.geuttae.mac` 입니다.
+같은 화면을 큰 창으로 여는 맥 앱입니다. 프로젝트는 `macos/App/App.xcodeproj` 입니다. 표시 이름은 여기야 여기, 묶음 식별자는 `com.anyplan75.geuttae.mac` 입니다.
 
 ```bash
 npm run build:mac

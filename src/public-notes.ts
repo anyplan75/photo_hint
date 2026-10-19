@@ -468,9 +468,11 @@ function httpsUrl(raw: string): string | null {
 }
 
 function plain(html: string): string {
-  const broken = html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n');
+  const noImage = html.replace(/<img\b[^>]*>/gi, ' ').replace(/!\[[^\]]*]\([^)]*\)/g, ' ');
+  const broken = noImage.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n');
   const stripped = broken.replace(/<[^>]+>/g, ' ');
   return unescapeHtml(stripped)
+    .replace(/https?:\/\/\S+\.(?:jpe?g|png|gif|webp|avif|bmp|svg)(\?\S*)?/gi, ' ')
     .split(/\s+/)
     .filter(Boolean)
     .join(' ');

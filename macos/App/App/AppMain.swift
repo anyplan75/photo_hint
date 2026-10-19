@@ -32,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "그때 그자리"
+        window.title = "여기야 여기"
         window.minSize = NSSize(width: 960, height: 640)
         window.setFrameAutosaveName("GeuttaeMainWindow")
         window.backgroundColor = NSColor(srgbRed: 16 / 255, green: 20 / 255, blue: 28 / 255, alpha: 1)

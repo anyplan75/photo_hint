@@ -1,6 +1,6 @@
 {
 	"appId": "com.anyplan75.geuttae",
-	"appName": "그때 그자리",
+	"appName": "여기야 여기",
 	"webDir": "dist",
 	"server": {
 		"url": "https://anyplan75.github.io/photo_hint/",

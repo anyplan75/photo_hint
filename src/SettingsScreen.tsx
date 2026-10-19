@@ -1,3 +1,4 @@
+import { aiAvailability } from './ai-brief';
 import { AccountPanel } from './AccountPanel';
 import { FALLBACK_SCENES, type SceneChoice } from './region-places';
 import type { Session } from './session';
@@ -41,7 +42,8 @@ export function SettingsScreen({
         </p>
         <p>자리 안내는 준비, 시간, 렌즈, 장비, 자리, 순간 중 하나만 보여 줍니다. 참고 사진의 원문은 페이지 링크로만 엽니다.</p>
       </article>
-      <p className="book-lead">그때 그자리</p>
+      <p className="book-lead" data-ai={aiAvailability().state}>{aiAvailability().detail}</p>
+      <p className="book-lead">여기야 여기</p>
       <p className="book-lead">{status}</p>
     </section>
   );

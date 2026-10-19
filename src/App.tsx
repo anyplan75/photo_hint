@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { describeAdded, KNOWN_REFERENCES, weeklyPick, windowForScene } from './catalog';
 import { activeScene, boxAround, rankPlaces, type RankedPlace } from './collect';
 import { loadFieldPrefs, writeFieldPrefs, type FieldPrefs } from './field-prefs';
+import { AiStatus } from './AiStatus';
 import { GuidePanel } from './GuidePanel';
 import { PublicNotes } from './PublicNotes';
 import { MyPlaces } from './MyPlaces';
@@ -129,38 +130,36 @@ export function App() {
     }
   }, []);
 
-  const locateOnStart = useRef(useMyLocation);
   useEffect(() => {
     const saved = savedRegion.current;
-    if (saved?.lat != null && saved.lng != null && !locateOnStart.current) {
-      setLocationText('저장한 지역을 사용 중');
-      void refresh(saved.lat, saved.lng, saved.name);
-      return;
-    }
-    if (!navigator.geolocation) {
+    function useSavedRegion(reason: string) {
+      if (saved?.lat != null && saved.lng != null) {
+        setUseMyLocation(false);
+        setLocationText(reason);
+        setRegionTitle(saved.name);
+        setCenter({ lat: saved.lat, lng: saved.lng });
+        void refresh(saved.lat, saved.lng, saved.name);
+        return;
+      }
       setLocationText('위치를 가져오지 못했습니다. 지역을 검색하세요.');
       setStatus('지역을 검색한 뒤 이 지역 분석을 누르세요.');
+    }
+    if (!navigator.geolocation) {
+      useSavedRegion('이 브라우저에서 내 위치를 쓸 수 없어 저장한 지역을 사용 중');
       return;
     }
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const lat = position.coords.latitude;
         const lng = position.coords.longitude;
+        setUseMyLocation(true);
         setLocationText('현재 위치를 사용 중');
         setCenter({ lat, lng });
         setRegionTitle('내 주변');
         setFly({ lat, lng, token: 1 });
         void refresh(lat, lng, '내 주변');
       },
-      () => {
-        setLocationText('위치 권한이 꺼져 있습니다');
-        if (saved?.lat != null && saved.lng != null) {
-          setStatus('저장한 지역으로 분석합니다.');
-          void refresh(saved.lat, saved.lng, saved.name);
-          return;
-        }
-        setStatus('지역을 검색한 뒤 이 지역 분석을 누르세요.');
-      },
+      () => useSavedRegion('위치 권한이 없어 저장한 지역을 사용 중'),
       { enableHighAccuracy: false, timeout: 8000, maximumAge: 120000 },
     );
   }, [refresh]);
@@ -364,11 +363,11 @@ export function App() {
     <main className="app shell" data-shell={tab}>
       <aside className="sidebar">
         <p className="sidebar-mark">촬영 참고</p>
-        <p className="sidebar-name">그때 그자리</p>
+        <p className="sidebar-name">여기야 여기</p>
         <Nav tab={tab} onTab={setTab} />
       </aside>
       <div className="stage">
-        <h1 className="phone-title">그때 그자리</h1>
+        <h1 className="phone-title">여기야 여기</h1>
         {tab === 'map' && (
           <div className="field">
             <div className="field-map">
@@ -401,6 +400,9 @@ export function App() {
                   removePoint: sync.removePoint,
                 }}
               />
+            </div>
+            <div className="field-list">
+              <AiStatus places={ranked} usingHere={useMyLocation} />
               <form className="field-controls" onSubmit={findPlaces}>
                 <div className="control-search">
                   <label className="sr" htmlFor="region-name">
@@ -470,8 +472,6 @@ export function App() {
                   {busy ? '계산 중' : '이 지역 분석'}
                 </button>
               </form>
-            </div>
-            <div className="field-list">
               {guideOpen && mapView && guideMatches(mapView, selectRequest, ranked) ? (
                 <div className="guide-column">
                   {guidePlaceCall(ranked, selectRequest) && <p className={`guide-call call-${guidePlaceCall(ranked, selectRequest)}`}>{callText(ranked, selectRequest)}</p>}
@@ -503,7 +503,12 @@ export function App() {
               ) : (
                 <RankList title={listTitle} status={status} busy={busy} places={ranked} onOpen={openPlace} />
               )}
-              <PublicNotes placeName={regionName} center={center} radiusKm={prefs.radiusKm} />
+              <PublicNotes
+                placeName={inJejuBox(center.lat, center.lng) || isJeju(regionName) ? '제주' : regionName}
+                center={center}
+                radiusKm={prefs.radiusKm}
+                nearbyNames={ranked.map((place) => place.name)}
+              />
             </div>
           </div>
         )}

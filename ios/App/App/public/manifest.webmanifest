@@ -1,6 +1,6 @@
 {
-  "name": "그때 그자리",
-  "short_name": "그때 그자리",
+  "name": "여기야 여기",
+  "short_name": "여기야 여기",
   "description": "지역을 정하면, 시도해 볼 사진과 그 자리·시간을 골라 줍니다.",
   "start_url": "/photo_hint/",
   "scope": "/photo_hint/",
