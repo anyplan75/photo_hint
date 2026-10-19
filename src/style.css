@@ -1052,6 +1052,40 @@ button:focus-visible, input:focus-visible {
   overflow: hidden;
 }
 
+.public-notes {
+  margin: 8px 14px 18px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+.public-notes-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.public-notes-head h2 { margin: 0; font-size: 1.05rem; }
+.public-notes-head span, .public-notes-caption, .public-note time, .public-source-lines { color: var(--muted); }
+.public-notes-caption, .public-notes-empty { margin: 8px 0 0; font-size: 0.82rem; line-height: 1.45; word-break: keep-all; }
+.public-notes-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  margin-top: 10px;
+  overflow: auto;
+}
+.public-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--card-2);
+}
+.public-note-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.public-note-source { color: var(--sea); font-size: 0.78rem; font-weight: 700; }
+.public-note time, .public-source-lines { font-size: 0.72rem; }
+.public-note-summary { margin: 0; font-size: 0.92rem; line-height: 1.45; word-break: keep-all; }
+.public-note a { color: var(--gold); font-size: 0.78rem; font-weight: 700; }
+.public-source-lines { margin: 8px 0 0; padding: 0; list-style: none; line-height: 1.4; }
+
 .guide-column .guide-panel { margin-top: 8px; }
 .guide-call { display: inline-block; margin: 0; }
 .origin-link a, .book-link a { color: var(--gold); font-weight: 700; }

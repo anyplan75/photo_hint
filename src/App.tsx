@@ -3,6 +3,7 @@ import { describeAdded, KNOWN_REFERENCES, weeklyPick, windowForScene } from './c
 import { activeScene, boxAround, rankPlaces, type RankedPlace } from './collect';
 import { loadFieldPrefs, writeFieldPrefs, type FieldPrefs } from './field-prefs';
 import { GuidePanel } from './GuidePanel';
+import { PublicNotes } from './PublicNotes';
 import { MyPlaces } from './MyPlaces';
 import { RankList } from './RankList';
 import { ReferenceBook } from './ReferenceBook';
@@ -502,6 +503,7 @@ export function App() {
               ) : (
                 <RankList title={listTitle} status={status} busy={busy} places={ranked} onOpen={openPlace} />
               )}
+              <PublicNotes placeName={regionName} center={center} radiusKm={prefs.radiusKm} />
             </div>
           </div>
         )}
