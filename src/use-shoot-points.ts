@@ -6,13 +6,13 @@ import { addShootPoint, loadShootPoints, removeShootPoint, writeShootPointMirror
 export type SyncMode = 'local' | 'syncing' | 'synced' | 'error';
 
 /** 로그인 중이면 계정 장소를 보여주고, 로그아웃 중이면 이 브라우저 목록만 다룹니다. */
-export function useSyncedShootPoints(region: string, uid: string | null, sessionReady: boolean) {
+export function useSyncedShootPoints(region: string, uid: string | null, sessionReady: boolean, enabled = true) {
   const [points, setPoints] = useState<ShootPoint[]>([]);
   const [mode, setMode] = useState<SyncMode>('local');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!sessionReady) return;
+    if (!enabled || !sessionReady) return;
     if (!uid) {
       setPoints(loadShootPoints(region));
       setMode('local');
@@ -57,7 +57,7 @@ export function useSyncedShootPoints(region: string, uid: string | null, session
       cancelled = true;
       stop();
     };
-  }, [region, uid, sessionReady]);
+  }, [region, uid, sessionReady, enabled]);
 
   async function addPoint(point: ShootPoint): Promise<void> {
     if (!uid) {

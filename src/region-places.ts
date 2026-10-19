@@ -105,6 +105,19 @@ const KIND_LABEL: Record<SpotKind, string> = {
   street: '거리',
 };
 
+export function kindLabel(kind: SpotKind): string {
+  return KIND_LABEL[kind];
+}
+
+export function kindForScene(scene: SceneChoice): SpotKind {
+  return KIND_FOR_SCENE[scene];
+}
+
+/** 제주 장소 목록을 만든 바운딩 박스 안인지 확인합니다. */
+export function inJejuBox(lat: number, lng: number): boolean {
+  return lat >= 33.19 && lat <= 33.57 && lng >= 126.15 && lng <= 126.98;
+}
+
 function sortKind(spots: Spot[], kind: SpotKind, sunAzimuth: number | null): Spot[] {
   if (kind === 'coast' && sunAzimuth !== null) {
     return [...spots].sort((a, b) => angleGap(a.seaward ?? 0, sunAzimuth) - angleGap(b.seaward ?? 0, sunAzimuth));

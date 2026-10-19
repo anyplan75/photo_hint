@@ -1,25 +1,26 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { describeAdded, weeklyPick, windowForScene, type ReferenceBrief } from './catalog';
-import { shootingGuide } from './guide';
-import { aimFor, recommendTime, sunPlan } from './recommend';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { describeAdded, KNOWN_REFERENCES, weeklyPick, windowForScene } from './catalog';
+import { activeScene, boxAround, rankPlaces, type RankedPlace } from './collect';
+import { loadFieldPrefs, writeFieldPrefs, type FieldPrefs } from './field-prefs';
+import { GuidePanel } from './GuidePanel';
+import { MyPlaces } from './MyPlaces';
+import { RankList } from './RankList';
+import { ReferenceBook } from './ReferenceBook';
 import {
-  FALLBACK_SCENES,
+  inJejuBox,
   isJeju,
+  JEJU_SPOTS,
   loadSpotsAround,
-  matchLabel,
-  pickSpots,
-  spotCounts,
   spotsForRegion,
-  whySpot,
   type SceneChoice,
   type Spot,
 } from './region-places';
-import { AccountPanel } from './AccountPanel';
-import { GuidePanel } from './GuidePanel';
+import { searchPlaces, type SearchHit } from './search';
 import { useSession } from './session';
+import { SettingsScreen } from './SettingsScreen';
 import { ShootMap, type SelectionView } from './ShootMap';
-import { searchPlaces } from './search';
-import { SOURCE_NAME, parseReferenceAddress, referenceKey } from './sources';
+import type { ShootPoint } from './shoot-points';
+import { parseReferenceAddress, referenceKey } from './sources';
 import {
   loadReferences,
   loadRegion,
@@ -28,112 +29,284 @@ import {
   type StoredReference,
   type StoredRegion,
 } from './storage';
-import { formatSelection } from './week';
+import { useSyncedShootPoints } from './use-shoot-points';
+
+type Tab = 'map' | 'book' | 'mine' | 'settings';
+
+const START = { lat: 33.390542, lng: 126.556513 };
 
 export function App() {
+  const session = useSession();
   const [now] = useState(() => new Date());
-  const [region, setRegion] = useState<StoredRegion | null>(() => loadRegion());
-  const [regionDraft, setRegionDraft] = useState('');
-  const [regionError, setRegionError] = useState<string | null>(null);
-  const [finding, setFinding] = useState(false);
+  const [tab, setTab] = useState<Tab>('map');
+  const savedRegion = useRef(loadRegion());
+  const [prefs, setPrefs] = useState<FieldPrefs>(() => loadFieldPrefs());
+  const [region, setRegion] = useState<StoredRegion | null>(savedRegion.current);
+  const [center, setCenter] = useState(() =>
+    savedRegion.current?.lat != null && savedRegion.current.lng != null
+      ? { lat: savedRegion.current.lat, lng: savedRegion.current.lng }
+      : START,
+  );
+  const [regionTitle, setRegionTitle] = useState(savedRegion.current?.name || '선택한 지역');
+  const [useMyLocation, setUseMyLocation] = useState(() => loadFieldPrefs().useMyLocation && !savedRegion.current);
+  const [locationText, setLocationText] = useState('위치를 확인하는 중');
+  const [query, setQuery] = useState('');
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [spots, setSpots] = useState<Spot[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('지도를 준비하고 있습니다.');
+  const [fly, setFly] = useState<{ lat: number; lng: number; token: number } | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [mapView, setMapView] = useState<SelectionView | null>(null);
+  const [selectRequest, setSelectRequest] = useState<{ kind: 'spot'; osm: string } | { kind: 'point'; id: string } | null>(null);
   const [references, setReferences] = useState<StoredReference[]>(() => loadReferences());
   const [urlDraft, setUrlDraft] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
-  const [remoteSpots, setRemoteSpots] = useState<Spot[]>([]);
-  const [remoteState, setRemoteState] = useState<'idle' | 'loading' | 'missing' | 'ready'>('idle');
-  const [weeklyChoice, setWeeklyChoice] = useState<SceneChoice | null>(null);
-  const [weeklyOsm, setWeeklyOsm] = useState('');
+  const [sceneOverride, setSceneOverride] = useState<SceneChoice | null>(null);
+  const generation = useRef(0);
+  const radiusRef = useRef(prefs.radiusKm);
+  const centerRef = useRef(center);
+  radiusRef.current = prefs.radiusKm;
+  centerRef.current = center;
   const pick = useMemo(() => weeklyPick(now), [now]);
-  const checked = region ? spotsForRegion(region.name) : null;
-  const spots = checked ?? remoteSpots;
-  const weeklyScene = pick.scene ?? weeklyChoice;
-  const weeklyWindow = weeklyScene ? windowForScene(weeklyScene, pick.window) : pick.window;
-  const weeklySpots = useMemo(
-    () => (weeklyScene ? pickSpots(weeklyScene, spots, aimFor(weeklyWindow)) : []),
-    [weeklyScene, spots, weeklyWindow],
-  );
-  const weeklyActive = weeklySpots.some((spot) => spot.osm === weeklyOsm) ? weeklyOsm : (weeklySpots[0]?.osm ?? '');
+  const scene = activeScene(sceneOverride ?? pick.scene, prefs.preferScenes);
+  const windowKind = scene ? windowForScene(scene, pick.window) : pick.window;
+  const regionName =
+    !useMyLocation && region?.name
+      ? region.name
+      : inJejuBox(center.lat, center.lng) || isJeju(regionTitle)
+        ? '제주'
+        : regionTitle || '내 주변';
+  const sync = useSyncedShootPoints(regionName, session.uid, session.ready);
 
-  useEffect(() => {
-    if (!region || checked) {
-      setRemoteSpots([]);
-      setRemoteState('idle');
+  const ranked = useMemo(
+    () =>
+      rankPlaces({
+        spots,
+        points: sync.points,
+        scene,
+        center,
+        radiusKm: prefs.radiusKm,
+        windowKind,
+        now,
+      }),
+    [spots, sync.points, scene, center, prefs.radiusKm, windowKind, now],
+  );
+  const rankedSpots = ranked.flatMap((place) => (place.spot ? [place.spot] : []));
+  const weeklyOsm = ranked.find((place) => place.spot?.matchesScene)?.spot?.osm ?? '';
+
+  const rememberView = useCallback((view: SelectionView | null) => {
+    setMapView((current) => (viewKey(current) === viewKey(view) ? current : view));
+  }, []);
+
+  const refresh = useCallback(async (lat: number, lng: number, title: string) => {
+    const ticket = ++generation.current;
+    setBusy(true);
+    setStatus('주변 자리와 이번 주 장면을 맞추는 중');
+    const catalog = spotsForRegion(title);
+    if (catalog || inJejuBox(lat, lng) || isJeju(title)) {
+      if (ticket !== generation.current) return;
+      setSpots(catalog ?? JEJU_SPOTS);
+      setBusy(false);
       return;
     }
-    if (region.south === null || region.west === null || region.north === null || region.east === null) {
-      setRemoteSpots([]);
-      setRemoteState('missing');
-      return;
-    }
+    const [south, west, north, east] = boxAround(lat, lng, radiusRef.current);
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 12000);
-    setRemoteState('loading');
-    loadSpotsAround(region.south, region.west, region.north, region.east, controller.signal)
-      .then((found) => {
-        setRemoteSpots(found);
-        setRemoteState(found.length > 0 ? 'ready' : 'missing');
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        console.error(error);
-        setRemoteSpots([]);
-        setRemoteState('missing');
-      });
-    return () => {
+    try {
+      const found = await loadSpotsAround(south, west, north, east, controller.signal);
+      if (ticket !== generation.current) return;
+      setSpots(found);
+      setBusy(false);
+    } catch {
+      if (ticket !== generation.current) return;
+      setSpots([]);
+      setBusy(false);
+      setStatus('이 지역의 장소 자료를 가져오지 못했습니다. 인터넷을 확인한 뒤 다시 분석하세요.');
+    } finally {
       window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [region, checked]);
+    }
+  }, []);
 
-  async function saveRegion(event: FormEvent) {
-    event.preventDefault();
-    const name = regionDraft.trim();
-    if (!name) {
-      setRegionError('지역 이름을 입력하세요.');
+  const locateOnStart = useRef(useMyLocation);
+  useEffect(() => {
+    const saved = savedRegion.current;
+    if (saved?.lat != null && saved.lng != null && !locateOnStart.current) {
+      setLocationText('저장한 지역을 사용 중');
+      void refresh(saved.lat, saved.lng, saved.name);
       return;
     }
-    setFinding(true);
-    setRegionError(null);
+    if (!navigator.geolocation) {
+      setLocationText('위치를 가져오지 못했습니다. 지역을 검색하세요.');
+      setStatus('지역을 검색한 뒤 이 지역 분석을 누르세요.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        setLocationText('현재 위치를 사용 중');
+        setCenter({ lat, lng });
+        setRegionTitle('내 주변');
+        setFly({ lat, lng, token: 1 });
+        void refresh(lat, lng, '내 주변');
+      },
+      () => {
+        setLocationText('위치 권한이 꺼져 있습니다');
+        if (saved?.lat != null && saved.lng != null) {
+          setStatus('저장한 지역으로 분석합니다.');
+          void refresh(saved.lat, saved.lng, saved.name);
+          return;
+        }
+        setStatus('지역을 검색한 뒤 이 지역 분석을 누르세요.');
+      },
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 120000 },
+    );
+  }, [refresh]);
+
+  useEffect(() => {
+    if (busy) return;
+    if (spots.length === 0 && ranked.length === 0) return;
+    if (!scene) {
+      setStatus('참고 도감에서 장면을 고르면 점수를 매깁니다.');
+      return;
+    }
+    if (ranked.length === 0) {
+      setStatus('이 반경에 공개된 자리가 없습니다. 지도를 누르면 그 좌표를 내 자리로 저장할 수 있습니다.');
+      return;
+    }
+    setStatus(`${ranked.length}곳을 장면 점수로 줄 세웠습니다.`);
+  }, [busy, ranked.length, scene, spots.length]);
+
+  async function findPlaces(event?: FormEvent) {
+    event?.preventDefault();
+    const name = query.trim();
+    if (!name) return;
     const controller = new AbortController();
     try {
-      const hits = await searchPlaces(name, controller.signal);
-      const hit = hits[0];
-      const next: StoredRegion = {
-        name,
-        label: hit?.label ?? '',
-        lat: hit?.lat ?? null,
-        lng: hit?.lng ?? null,
-        south: hit?.south ?? null,
-        north: hit?.north ?? null,
-        west: hit?.west ?? null,
-        east: hit?.east ?? null,
-        savedAt: new Date().toISOString(),
-      };
-      writeRegion(next);
-      setRegion(next);
-      setRegionDraft('');
-      if (!hit && !isJeju(name)) setRegionError('그 지역을 찾지 못했습니다.');
+      const found = await searchPlaces(name, controller.signal);
+      setHits(found);
+      if (found.length === 0) setStatus('그 지역을 찾지 못했습니다.');
     } catch {
-      if (isJeju(name)) {
-        const next: StoredRegion = {
-          name,
-          label: '',
-          lat: null,
-          lng: null,
-          south: null,
-          north: null,
-          west: null,
-          east: null,
-          savedAt: new Date().toISOString(),
-        };
-        writeRegion(next);
-        setRegion(next);
-        setRegionDraft('');
-      } else {
-        setRegionError('지역을 찾지 못했습니다. 잠시 뒤 다시 시도하세요.');
-      }
-    } finally {
-      setFinding(false);
+      setStatus('지역을 찾지 못했습니다. 잠시 뒤 다시 시도하세요.');
+    }
+  }
+
+  function go(hit: SearchHit) {
+    const name = shortTitle(hit.label);
+    const next: StoredRegion = {
+      name,
+      label: hit.label,
+      lat: hit.lat,
+      lng: hit.lng,
+      south: hit.south,
+      north: hit.north,
+      west: hit.west,
+      east: hit.east,
+      savedAt: new Date().toISOString(),
+    };
+    setUseMyLocation(false);
+    writeFieldPrefs({ ...prefs, useMyLocation: false });
+    writeRegion(next);
+    setCenter({ lat: hit.lat, lng: hit.lng });
+    setRegionTitle(name);
+    setRegion(next);
+    setHits([]);
+    setQuery('');
+    setFly({ lat: hit.lat, lng: hit.lng, token: Date.now() });
+    void refresh(hit.lat, hit.lng, name);
+  }
+
+  function focusOnMe() {
+    setUseMyLocation(true);
+    writeFieldPrefs({ ...prefs, useMyLocation: true });
+    if (!navigator.geolocation) {
+      setStatus('이 브라우저에서 내 위치를 쓸 수 없습니다.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        setLocationText('현재 위치를 사용 중');
+        setCenter({ lat, lng });
+        setRegionTitle('내 주변');
+        setFly({ lat, lng, token: Date.now() });
+        void refresh(lat, lng, '내 주변');
+      },
+      () => setStatus('아직 내 위치가 없습니다. 위치 권한을 허용하세요.'),
+      { enableHighAccuracy: false, timeout: 8000 },
+    );
+  }
+
+  function useSaved() {
+    if (!region || region.lat == null || region.lng == null) {
+      setStatus('저장된 지역이 없습니다. 지도를 맞춘 뒤 이 지역을 저장하세요.');
+      return;
+    }
+    setUseMyLocation(false);
+    writeFieldPrefs({ ...prefs, useMyLocation: false });
+    setCenter({ lat: region.lat, lng: region.lng });
+    setRegionTitle(region.name);
+    setFly({ lat: region.lat, lng: region.lng, token: Date.now() });
+    void refresh(region.lat, region.lng, region.name);
+  }
+
+  function saveCurrentRegion() {
+    const next: StoredRegion = {
+      name: regionTitle || '저장한 지역',
+      label: region?.label ?? '',
+      lat: center.lat,
+      lng: center.lng,
+      south: region?.south ?? null,
+      north: region?.north ?? null,
+      west: region?.west ?? null,
+      east: region?.east ?? null,
+      savedAt: new Date().toISOString(),
+    };
+    writeRegion(next);
+    setRegion(next);
+    setUseMyLocation(false);
+    writeFieldPrefs({ ...prefs, useMyLocation: false });
+    setStatus(`${next.name} 지역을 저장했습니다.`);
+  }
+
+  function openPlace(place: RankedPlace) {
+    setSelectRequest(place.pointId ? { kind: 'point', id: place.pointId } : { kind: 'spot', osm: place.id });
+    setGuideOpen(true);
+    setTab('map');
+  }
+
+  function openPoint(point: ShootPoint) {
+    setCenter({ lat: point.lat, lng: point.lng });
+    setFly({ lat: point.lat, lng: point.lng, token: Date.now() });
+    setSelectRequest({ kind: 'point', id: point.id });
+    setGuideOpen(true);
+    setTab('map');
+  }
+
+  async function saveMineFromGuide() {
+    if (!mapView || !selectRequest || selectRequest.kind !== 'spot') return;
+    const place = ranked.find((item) => item.id === selectRequest.osm);
+    if (!place) return;
+    if (sync.points.some((point) => point.name === place.name && Math.abs(point.lat - place.lat) < 0.0008)) {
+      setStatus('이미 내 자리로 저장한 좌표입니다.');
+      return;
+    }
+    const point: ShootPoint = {
+      id: crypto.randomUUID(),
+      region: regionName,
+      name: place.name,
+      lat: place.lat,
+      lng: place.lng,
+      savedAt: new Date().toISOString(),
+      note: place.spot?.address ?? undefined,
+    };
+    try {
+      await sync.addPoint(point);
+      setStatus(`${place.name} 자리를 내 자리로 저장했습니다.`);
+    } catch {
+      setStatus('계정에 저장하지 못했습니다. 다시 시도해 주세요.');
     }
   }
 
@@ -158,8 +331,12 @@ export function App() {
     setUrlError(null);
   }
 
-  function chooseScene(id: string, scene: SceneChoice) {
-    const next = references.map((item) => (item.id === id ? { ...item, sceneChoice: scene } : item));
+  function chooseScene(id: string, nextScene: SceneChoice) {
+    if (id === pick.id || !references.some((item) => item.id === id)) {
+      setSceneOverride(nextScene);
+      return;
+    }
+    const next = references.map((item) => (item.id === id ? { ...item, sceneChoice: nextScene } : item));
     writeReferences(next);
     setReferences(next);
   }
@@ -170,399 +347,246 @@ export function App() {
     setReferences(next);
   }
 
-  const session = useSession();
-  const waiting = Boolean(region && !checked && remoteState === 'loading');
-  const missing = Boolean(region && !checked && remoteState === 'missing');
-  const [shelf, setShelf] = useState<Shelf>('guide');
-  const [mapView, setMapView] = useState<SelectionView | null>(null);
-  const [dismissPoint, setDismissPoint] = useState(0);
-  const rememberView = useCallback((view: SelectionView | null) => {
-    setMapView((current) => (viewKey(current) === viewKey(view) ? current : view));
-  }, []);
-
-  useEffect(() => {
-    if (!region) setShelf('region');
-  }, [region]);
-
-  function toggleShelf(next: Shelf) {
-    setShelf((current) => (current === next ? 'guide' : next));
+  function toggleScene(nextScene: SceneChoice) {
+    const preferScenes = prefs.preferScenes.includes(nextScene)
+      ? prefs.preferScenes.filter((item) => item !== nextScene)
+      : [...prefs.preferScenes, nextScene];
+    const next = { ...prefs, preferScenes };
+    setPrefs(next);
+    writeFieldPrefs({ ...next, useMyLocation });
   }
 
+  const weeklyShown = sceneOverride ?? pick.scene;
+  const listTitle = useMyLocation ? '내 주변' : regionTitle;
+
   return (
-    <main className="app">
-      <header className="chrome">
-        <div className="brand">
-          <p className="mark">촬영 참고</p>
-          <h1>그때 그자리</h1>
-        </div>
-        <nav className="chrome-nav" aria-label="화면 이동">
-          <button type="button" className={shelf === 'guide' ? 'on' : ''} aria-pressed={shelf === 'guide'} onClick={() => toggleShelf('guide')}>
-            안내
-          </button>
-          <button type="button" className={shelf === 'account' ? 'on' : ''} aria-pressed={shelf === 'account'} onClick={() => toggleShelf('account')}>
-            계정
-          </button>
-          <button
-            type="button"
-            className={shelf === 'region' ? 'on' : ''}
-            aria-pressed={shelf === 'region'}
-            aria-label={region ? `지역, ${region.name}` : '지역'}
-            onClick={() => toggleShelf('region')}
-          >
-            {region ? region.name : '지역'}
-          </button>
-          <button type="button" className={shelf === 'week' ? 'on' : ''} aria-pressed={shelf === 'week'} onClick={() => toggleShelf('week')}>
-            이번 주
-          </button>
-        </nav>
-      </header>
-
-      <section className="map-stage" aria-label="지도 영역">
-        {region ? (
-          <ShootMap
-            region={region.name}
-            center={region.lat !== null && region.lng !== null ? { lat: region.lat, lng: region.lng } : null}
-            spots={weeklySpots}
-            activeOsm={weeklyActive}
-            onSelect={setWeeklyOsm}
-            scene={weeklyScene}
-            basis={pick.basis}
-            windowKind={weeklyWindow}
-            now={now}
-            sessionReady={session.ready}
-            uid={session.uid}
-            onView={rememberView}
-            onOpenGuide={() => setShelf('guide')}
-            dismissPoint={dismissPoint}
-          />
-        ) : (
-          <section className="shoot-map panel map-empty" data-map="waiting">
-            <div className="panel-head">
-              <h2>지도</h2>
-              <p>지역을 정하면 그 자리의 지도가 이 화면에 남습니다.</p>
+    <main className="app shell" data-shell={tab}>
+      <aside className="sidebar">
+        <p className="sidebar-mark">촬영 참고</p>
+        <p className="sidebar-name">그때 그자리</p>
+        <Nav tab={tab} onTab={setTab} />
+      </aside>
+      <div className="stage">
+        <h1 className="phone-title">그때 그자리</h1>
+        {tab === 'map' && (
+          <div className="field">
+            <div className="field-map">
+              <ShootMap
+                bare
+                region={regionName}
+                center={center}
+                spots={rankedSpots}
+                activeOsm={weeklyOsm}
+                onSelect={(osm) => {
+                  setSelectRequest({ kind: 'spot', osm });
+                  setGuideOpen(true);
+                }}
+                scene={scene}
+                basis={pick.basis}
+                windowKind={windowKind}
+                now={now}
+                sessionReady={session.ready}
+                uid={session.uid}
+                onView={rememberView}
+                onOpenGuide={() => setGuideOpen(true)}
+                fly={fly}
+                onDrag={(lat, lng) => setCenter({ lat, lng })}
+                selectRequest={selectRequest}
+                external={{
+                  points: sync.points,
+                  mode: sync.mode,
+                  error: sync.error,
+                  addPoint: sync.addPoint,
+                  removePoint: sync.removePoint,
+                }}
+              />
+              <form className="field-controls" onSubmit={findPlaces}>
+                <div className="control-search">
+                  <label className="sr" htmlFor="region-name">
+                    지역 검색
+                  </label>
+                  <input
+                    id="region-name"
+                    name="region"
+                    value={query}
+                    placeholder="지역, 오름, 해안 검색"
+                    onChange={(event) => setQuery(event.target.value)}
+                    autoComplete="off"
+                  />
+                  <button className="field-btn sea" type="submit">
+                    찾기
+                  </button>
+                </div>
+                {hits.length > 0 && (
+                  <div className="control-hits">
+                    {hits.map((hit) => (
+                      <button key={hit.id} type="button" onClick={() => go(hit)}>
+                        {hit.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="control-where">
+                  <strong>{listTitle}</strong>
+                  <span>{locationText}</span>
+                </div>
+                <label className="control-radius">
+                  <span>반경 {prefs.radiusKm}km</span>
+                  <input
+                    type="range"
+                    min={3}
+                    max={30}
+                    step={1}
+                    value={prefs.radiusKm}
+                    aria-label="반경"
+                    onChange={(event) => {
+                      const radiusKm = Number(event.target.value);
+                      const next = { ...prefs, radiusKm };
+                      setPrefs(next);
+                      writeFieldPrefs({ ...next, useMyLocation });
+                    }}
+                    onMouseUp={() => void refresh(centerRef.current.lat, centerRef.current.lng, useMyLocation ? '내 주변' : regionTitle)}
+                    onTouchEnd={() => void refresh(centerRef.current.lat, centerRef.current.lng, useMyLocation ? '내 주변' : regionTitle)}
+                  />
+                </label>
+                <div className="control-actions">
+                  <button className="field-btn" type="button" onClick={focusOnMe}>
+                    내 위치
+                  </button>
+                  <button className="field-btn" type="button" onClick={useSaved}>
+                    저장 지역
+                  </button>
+                  <button className="field-btn" type="button" onClick={saveCurrentRegion}>
+                    이 지역 저장
+                  </button>
+                </div>
+                <button
+                  className="field-btn good"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void refresh(center.lat, center.lng, useMyLocation ? '내 주변' : regionTitle)}
+                >
+                  {busy ? '계산 중' : '이 지역 분석'}
+                </button>
+              </form>
             </div>
-          </section>
+            <div className="field-list">
+              {guideOpen && mapView && guideMatches(mapView, selectRequest, ranked) ? (
+                <div className="guide-column">
+                  {guidePlaceCall(ranked, selectRequest) && <p className={`guide-call call-${guidePlaceCall(ranked, selectRequest)}`}>{callText(ranked, selectRequest)}</p>}
+                  <GuidePanel
+                    kicker={mapView.roleLabel}
+                    name={mapView.name}
+                    address={mapView.address}
+                    time={mapView.time}
+                    coords={mapView.coords}
+                    lead={mapView.guide.lead}
+                    blocks={mapView.guide.blocks}
+                    role={mapView.role}
+                    markSelection
+                    onClose={() => setGuideOpen(false)}
+                  />
+                  <p className="origin-link">
+                    이번 주 원문 ·{' '}
+                    <a href={pick.url} target="_blank" rel="noopener noreferrer">
+                      페이지 열기
+                    </a>
+                  </p>
+                  <p className="origin-note">자리 안내는 위 섹션이 기준입니다. 사진은 원문 페이지에서만 봅니다.</p>
+                  {mapView.role !== 'point' && (
+                    <button className="field-btn good" type="button" onClick={() => void saveMineFromGuide()}>
+                      내 자리로 저장
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <RankList title={listTitle} status={status} busy={busy} places={ranked} onOpen={openPlace} />
+              )}
+            </div>
+          </div>
         )}
-      </section>
-
-      <section className="read-shelf" aria-label="안내와 설정" data-shelf={shelf}>
-      {shelf === 'account' && <AccountPanel session={session} />}
-
-      {shelf === 'region' && (
-      <section className="panel region-panel" aria-labelledby="region-title">
-        <div className="panel-head">
-          <h2 id="region-title">지역</h2>
-          <p>지역 이름은 이 브라우저에 남습니다. 지도에 저장한 촬영 지점은 로그인한 계정으로 맞춰집니다.</p>
-        </div>
-        {region && (
-          <p className="where-kicker" data-region={region.name}>
-            {region.name}
-            {region.label ? ` · ${shortLabel(region.label)}` : ''}
-          </p>
-        )}
-        {checked && <p className="note">OpenStreetMap · {spotCounts(checked)}</p>}
-        <form className="search" id="region-form" onSubmit={saveRegion}>
-          <label className="sr" htmlFor="region-name">
-            지역 이름
-          </label>
-          <input
-            id="region-name"
-            name="region"
-            value={regionDraft}
-            placeholder="예: 제주"
-            onChange={(event) => setRegionDraft(event.target.value)}
-            autoComplete="off"
+        {tab === 'book' && (
+          <ReferenceBook
+            pick={{ ...pick, scene: weeklyShown }}
+            known={KNOWN_REFERENCES.filter((item) => item.id !== pick.id)}
+            added={references.map((item) => ({ item, brief: describeAdded(item.url, item.source) }))}
+            urlDraft={urlDraft}
+            urlError={urlError}
+            onUrl={setUrlDraft}
+            onAdd={addReference}
+            onChoose={chooseScene}
+            onRemove={removeReference}
           />
-          <button className="ghost slim" type="submit" disabled={finding}>
-            {finding ? '찾는 중' : region ? '바꾸기' : '이 지역으로'}
-          </button>
-        </form>
-        {regionError && <p className="note error">{regionError}</p>}
-      </section>
-      )}
-
-      {shelf === 'week' && (region ? (
-        <>
-          <WeeklyCard
-            pick={pick}
-            scene={weeklyScene}
-            spots={spots}
-            now={now}
-            waiting={waiting}
-            missing={missing}
-            selectedOsm={weeklyActive}
-            onChoose={setWeeklyChoice}
-            onSelect={(osm) => {
-              setWeeklyOsm(osm);
-              setShelf('guide');
+        )}
+        {tab === 'mine' && (
+          <MyPlaces
+            points={sync.points}
+            onAnalyze={openPoint}
+            onDelete={(point) => {
+              void sync.removePoint(point.id);
             }}
           />
-          <section className="favorites" aria-labelledby="add-title">
-            <h2 id="add-title">페이지 주소로 추가</h2>
-            <p className="day-line">1x, 1650Gallery, LensCulture, World Press Photo, 레드불 일루미네이트, 레드불 콘텐츠 풀.</p>
-            <form className="search" id="reference-form" onSubmit={addReference}>
-              <label className="sr" htmlFor="reference-url">
-                페이지 주소
-              </label>
-              <input
-                id="reference-url"
-                name="url"
-                inputMode="url"
-                value={urlDraft}
-                placeholder="페이지 주소를 붙여 넣기"
-                onChange={(event) => setUrlDraft(event.target.value)}
-                autoComplete="off"
-              />
-              <button className="ghost slim" type="submit">
-                추가
-              </button>
-            </form>
-            {urlError && <p className="note error">{urlError}</p>}
-            {references.map((item) => {
-              const brief = describeAdded(item.url, item.source);
-              return (
-                <ReferenceCard
-                  key={item.id}
-                  brief={brief}
-                  scene={item.sceneChoice ?? brief.scene}
-                  spots={spots}
-                  now={now}
-                  waiting={waiting}
-                  missing={missing}
-                  onChoose={(scene) => chooseScene(item.id, scene)}
-                  onRemove={() => removeReference(item.id)}
-                />
-              );
-            })}
-          </section>
-        </>
-      ) : (
-        <p className="note empty-region">지역을 정하면 이번 주 링크와, 그 지역에서 시도할 자리가 나옵니다.</p>
-      ))}
-
-      {shelf === 'guide' && (
-        mapView ? (
-          <GuidePanel
-            kicker={mapView.roleLabel}
-            name={mapView.name}
-            address={mapView.address}
-            time={mapView.time}
-            coords={mapView.coords}
-            lead={mapView.guide.lead}
-            blocks={mapView.guide.blocks}
-            role={mapView.role}
-            markSelection
-            onClose={mapView.role === 'point' ? () => setDismissPoint((count) => count + 1) : undefined}
-          />
-        ) : (
-          <article className="guide-panel guide-empty">
-            <h2>안내</h2>
-            <p>{region ? '핀을 누르면 그 자리의 안내가 섹션으로 열립니다.' : '지역을 정하면 지도와 안내가 열립니다.'}</p>
-          </article>
-        )
-      )}
-      </section>
+        )}
+        {tab === 'settings' && (
+          <SettingsScreen session={session} preferScenes={prefs.preferScenes} onToggleScene={toggleScene} status={status} />
+        )}
+      </div>
+      <nav className="tabbar" aria-label="화면 이동">
+        <Nav tab={tab} onTab={setTab} />
+      </nav>
     </main>
   );
 }
 
-type Shelf = 'guide' | 'account' | 'region' | 'week';
+function Nav({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
+  const items: { id: Tab; label: string }[] = [
+    { id: 'map', label: '지도' },
+    { id: 'book', label: '참고' },
+    { id: 'mine', label: '내 자리' },
+    { id: 'settings', label: '설정' },
+  ];
+  return (
+    <>
+      {items.map((item) => (
+        <button key={item.id} type="button" className={tab === item.id ? 'on' : ''} aria-pressed={tab === item.id} onClick={() => onTab(item.id)}>
+          {item.label}
+        </button>
+      ))}
+    </>
+  );
+}
+
+function guidePlaceCall(places: RankedPlace[], request: { kind: 'spot'; osm: string } | { kind: 'point'; id: string } | null): string {
+  const place = request ? places.find((item) => (request.kind === 'spot' ? item.id === request.osm : item.pointId === request.id)) : undefined;
+  return place?.call ?? '';
+}
+
+function callText(places: RankedPlace[], request: { kind: 'spot'; osm: string } | { kind: 'point'; id: string } | null): string {
+  const place = request ? places.find((item) => (request.kind === 'spot' ? item.id === request.osm : item.pointId === request.id)) : undefined;
+  return place?.callTitle ?? '';
+}
+
+function guideMatches(
+  view: SelectionView,
+  request: { kind: 'spot'; osm: string } | { kind: 'point'; id: string } | null,
+  places: RankedPlace[],
+): boolean {
+  if (!request) return false;
+  const place = places.find((item) => (request.kind === 'spot' ? item.id === request.osm : item.pointId === request.id));
+  if (!place) return false;
+  if (view.name !== place.name) return false;
+  return request.kind === 'point' ? view.role === 'point' : view.role !== 'point';
+}
 
 function viewKey(view: SelectionView | null): string {
   if (!view) return '';
   return `${view.role}|${view.name}|${view.time}|${view.address}|${view.guide.lead}|${view.guide.blocks.map((block) => block.heading + block.body).join('|')}`;
 }
 
-function WeeklyCard({
-  pick,
-  scene,
-  spots,
-  now,
-  waiting,
-  missing,
-  selectedOsm,
-  onChoose,
-  onSelect,
-}: {
-  pick: ReferenceBrief & { startsAt: string };
-  scene: SceneChoice | null;
-  spots: Spot[];
-  now: Date;
-  waiting: boolean;
-  missing: boolean;
-  selectedOsm: string;
-  onChoose: (scene: SceneChoice) => void;
-  onSelect: (osm: string) => void;
-}) {
-  return (
-    <article className="shot" id="weekly-pick" data-weekly={pick.id} aria-labelledby="weekly-title">
-      <p className="shot-kicker">
-        {formatSelection(pick.startsAt)}
-        {holdsUntilNextSunday(pick.startsAt, now) ? ' · 다음 일요일 오전 9시까지' : ''}
-      </p>
-      <h2 id="weekly-title">{SOURCE_NAME[pick.source]}</h2>
-      <p className="summary">
-        <a href={pick.url} target="_blank" rel="noopener noreferrer">
-          페이지 열기
-        </a>
-      </p>
-      <PlaceAdvice
-        brief={pick}
-        scene={scene}
-        spots={spots}
-        now={now}
-        waiting={waiting}
-        missing={missing}
-        selectedOsm={selectedOsm}
-        onChoose={onChoose}
-        onSelect={onSelect}
-      />
-    </article>
-  );
-}
-
-function ReferenceCard({
-  brief,
-  scene,
-  spots,
-  now,
-  waiting,
-  missing,
-  onChoose,
-  onRemove,
-}: {
-  brief: ReferenceBrief;
-  scene: SceneChoice | null;
-  spots: Spot[];
-  now: Date;
-  waiting: boolean;
-  missing: boolean;
-  onChoose: (scene: SceneChoice) => void;
-  onRemove: () => void;
-}) {
-  return (
-    <article className="shot" data-added-reference={brief.url}>
-      <p className="shot-kicker" data-source={brief.source}>
-        {SOURCE_NAME[brief.source]}
-      </p>
-      <p className="summary">
-        <a href={brief.url} target="_blank" rel="noopener noreferrer">
-          {brief.url}
-        </a>
-      </p>
-      <PlaceAdvice brief={brief} scene={scene} spots={spots} now={now} waiting={waiting} missing={missing} onChoose={onChoose} embedGuide />
-      <button className="save" type="button" onClick={onRemove}>
-        빼기
-      </button>
-    </article>
-  );
-}
-
-function PlaceAdvice({
-  brief,
-  scene,
-  spots,
-  now,
-  waiting,
-  missing,
-  selectedOsm,
-  onChoose,
-  onSelect,
-  embedGuide = false,
-}: {
-  brief: ReferenceBrief;
-  scene: SceneChoice | null;
-  spots: Spot[];
-  now: Date;
-  waiting: boolean;
-  missing: boolean;
-  selectedOsm?: string;
-  onChoose: (scene: SceneChoice) => void;
-  onSelect?: (osm: string) => void;
-  embedGuide?: boolean;
-}) {
-  const windowKind = scene ? windowForScene(scene, brief.window) : brief.window;
-  const chosen = scene ? pickSpots(scene, spots, aimFor(windowKind)) : [];
-  const [localSelected, setLocalSelected] = useState(chosen[0]?.osm ?? '');
-  const selected = selectedOsm !== undefined ? selectedOsm : localSelected;
-  const active = chosen.some((spot) => spot.osm === selected) ? selected : chosen[0]?.osm;
-  function choose(osm: string) {
-    setLocalSelected(osm);
-    onSelect?.(osm);
-  }
-  const activeSpot = chosen.find((spot) => spot.osm === active);
-  const guide = scene && activeSpot ? shootingGuide(scene, brief.basis, activeSpot, sunPlan(activeSpot.lat, activeSpot.lng, windowKind, now)) : null;
-  return (
-    <div className="method" data-method>
-      <h4>장면</h4>
-      {scene ? (
-        <p data-scene>
-          {scene} · {brief.basis}
-        </p>
-      ) : (
-        <>
-          <p>페이지 글을 읽지 못했습니다. 장면을 고르세요.</p>
-          <div className="chips" role="group" aria-label="장면">
-            {FALLBACK_SCENES.map((choice) => (
-              <button key={choice} type="button" className="chip" onClick={() => onChoose(choice)}>
-                {choice}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-      <h4>장소</h4>
-      {waiting && <p>이 지역의 장소를 찾는 중입니다.</p>}
-      {!waiting && missing && <p data-place-missing>이 지역의 장소 자료를 찾지 못했습니다.</p>}
-      {!waiting && !missing && scene && spots.length === 0 && (
-        <p data-place-missing>이 장면에 맞는 장소 자료를 찾지 못했습니다.</p>
-      )}
-      {chosen.length > 0 && (
-        <div className="place-chips" role="group" aria-label="장소">
-          {chosen.map((spot) => (
-            <button
-              key={spot.osm}
-              type="button"
-              className={active === spot.osm ? 'on' : ''}
-              aria-pressed={active === spot.osm}
-              data-place-option={spot.name}
-              onClick={() => choose(spot.osm)}
-            >
-              {spot.name}
-            </button>
-          ))}
-        </div>
-      )}
-      {activeSpot && scene && (
-        <>
-          <p data-match>{matchLabel(scene, activeSpot)}</p>
-          <p data-why>{whySpot(scene, activeSpot)}</p>
-        </>
-      )}
-      {embedGuide && guide && activeSpot && (
-        <GuidePanel
-          kicker={scene ?? '장면'}
-          name={activeSpot.name}
-          address={activeSpot.address ?? '주소를 찾지 못했습니다.'}
-          time={recommendTime(activeSpot.lat, activeSpot.lng, windowKind, now)}
-          coords={`${activeSpot.lat.toFixed(5)}, ${activeSpot.lng.toFixed(5)} · ${activeSpot.osm}`}
-          lead={guide.lead}
-          blocks={guide.blocks}
-        />
-      )}
-    </div>
-  );
-}
-
-function holdsUntilNextSunday(startsAt: string, now: Date): boolean {
-  return now.getTime() < new Date(startsAt).getTime() + 7 * 24 * 60 * 60 * 1000;
-}
-
-function shortLabel(label: string): string {
-  return label
+function shortTitle(label: string): string {
+  const parts = label
     .split(',')
     .map((part) => part.trim())
-    .filter(Boolean)
-    .slice(0, 3)
-    .join(', ');
+    .filter(Boolean);
+  return parts[0] || label;
 }

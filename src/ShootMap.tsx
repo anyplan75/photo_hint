@@ -7,7 +7,7 @@ import type { WindowKind } from './places';
 import { recommendTime, sunPlan } from './recommend';
 import { cardinal, type RankedSpot, type SceneChoice } from './region-places';
 import type { ShootPoint } from './shoot-points';
-import { useSyncedShootPoints } from './use-shoot-points';
+import { useSyncedShootPoints, type SyncMode } from './use-shoot-points';
 
 type PinSelection = { kind: 'spot'; osm: string } | { kind: 'point'; id: string };
 
@@ -41,6 +41,11 @@ export function ShootMap({
   onView,
   onOpenGuide,
   dismissPoint = 0,
+  bare = false,
+  fly = null,
+  onDrag,
+  selectRequest = null,
+  external = null,
 }: {
   region: string;
   center: { lat: number; lng: number } | null;
@@ -59,6 +64,18 @@ export function ShootMap({
   onOpenGuide?: () => void;
   /** 저장한 지점 안내를 닫고 이번 주 자리로 돌아갑니다. */
   dismissPoint?: number;
+  /** 지도만 채웁니다. 점수 목록과 계정 문장은 바깥 화면이 맡습니다. */
+  bare?: boolean;
+  fly?: { lat: number; lng: number; token: number } | null;
+  onDrag?: (lat: number, lng: number) => void;
+  selectRequest?: PinSelection | null;
+  external?: {
+    points: ShootPoint[];
+    mode: SyncMode;
+    error: string | null;
+    addPoint: (point: ShootPoint) => Promise<void>;
+    removePoint: (id: string) => Promise<void>;
+  } | null;
 }) {
   const token = mapboxPublicToken();
   const canvas = useRef<HTMLDivElement>(null);
@@ -67,7 +84,14 @@ export function ShootMap({
   const onSelectRef = useRef(onSelect);
   const fitted = useRef('');
   onSelectRef.current = onSelect;
-  const { points, mode, error: syncError, addPoint, removePoint } = useSyncedShootPoints(region, uid, sessionReady);
+  const internal = useSyncedShootPoints(region, uid, sessionReady, external === null);
+  const points = external?.points ?? internal.points;
+  const mode = external?.mode ?? internal.mode;
+  const syncError = external?.error ?? internal.error;
+  const addPoint = external?.addPoint ?? internal.addPoint;
+  const removePoint = external?.removePoint ?? internal.removePoint;
+  const onDragRef = useRef(onDrag);
+  onDragRef.current = onDrag;
   const [draft, setDraft] = useState<{ lat: number; lng: number } | null>(null);
   const [name, setName] = useState('');
   const [pointError, setPointError] = useState<string | null>(null);
@@ -114,6 +138,25 @@ export function ShootMap({
     setSelected(osm ? { kind: 'spot', osm } : null);
   }, [dismissPoint]);
 
+  const selectKey = selectRequest ? (selectRequest.kind === 'spot' ? `spot:${selectRequest.osm}` : `point:${selectRequest.id}`) : '';
+  const selectRef = useRef(selectRequest);
+  selectRef.current = selectRequest;
+  useEffect(() => {
+    const request = selectRef.current;
+    if (!request) return;
+    setSelected(request);
+    setDraft(null);
+    setName('');
+  }, [selectKey]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !fly) return;
+    const tilted = viewRef.current === '3d';
+    const camera = tilted ? { pitch: 60, bearing: -17 } : { pitch: 0, bearing: 0 };
+    map.easeTo({ center: [fly.lng, fly.lat], zoom: Math.max(map.getZoom(), 10), duration: 500, ...camera });
+  }, [fly?.token]);
+
   useEffect(() => {
     const element = canvas.current;
     if (!token || !element) return;
@@ -128,6 +171,10 @@ export function ShootMap({
     });
     map.addControl(new mapboxgl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
     map.on('pitch', () => setPitch(Math.round(map.getPitch())));
+    map.on('dragend', () => {
+      const next = map.getCenter();
+      onDragRef.current?.(next.lat, next.lng);
+    });
     map.on('click', (event) => {
       const target = event.originalEvent.target;
       if (ignoreMapClick.current) {
@@ -257,7 +304,7 @@ export function ShootMap({
 
   return (
     <section
-      className="shoot-map panel"
+      className={bare ? 'shoot-map bare' : 'shoot-map panel'}
       aria-labelledby="map-title"
       data-map={token ? 'ready' : 'missing'}
       data-map-view={view}
@@ -281,12 +328,14 @@ export function ShootMap({
               </button>
             </div>
           </div>
-          <p className="note">{syncNote(mode)}</p>
-          <p className="map-legend">
-            <span className="map-pin weekly" aria-hidden="true" /> 이번 주 선정
-            <span className="map-pin" aria-hidden="true" /> 추천 장소
-            <span className="map-pin mine" aria-hidden="true" /> 저장한 지점
-          </p>
+          {!bare && <p className="note">{syncNote(mode)}</p>}
+          {!bare && (
+            <p className="map-legend">
+              <span className="map-pin weekly" aria-hidden="true" /> 이번 주 선정
+              <span className="map-pin" aria-hidden="true" /> 추천 장소
+              <span className="map-pin mine" aria-hidden="true" /> 저장한 지점
+            </p>
+          )}
           {draft && (
             <form className="search" data-point-form onSubmit={savePoint}>
               <label className="sr" htmlFor="point-name">
@@ -316,7 +365,7 @@ export function ShootMap({
           <p data-map-note>지도를 표시하려면 Mapbox 공개 토큰이 필요합니다.</p>
         </>
       )}
-      {points.length > 0 && (
+      {!bare && points.length > 0 && (
         <ul className="user-points" data-user-points>
           {points.map((point) => (
             <li key={point.id} data-user-point={point.name}>
