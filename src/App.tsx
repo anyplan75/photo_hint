@@ -206,6 +206,7 @@ export function App() {
       savedAt: new Date().toISOString(),
     };
     setUseMyLocation(false);
+    setLocationText('검색한 지역을 사용 중');
     writeFieldPrefs({ ...prefs, useMyLocation: false });
     writeRegion(next);
     setCenter({ lat: hit.lat, lng: hit.lng });
