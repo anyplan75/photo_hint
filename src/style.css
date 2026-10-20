@@ -903,7 +903,20 @@ button:focus-visible, input:focus-visible {
 @container (min-width: 860px) {
   .field { flex-direction: row; }
   .field-map { flex: 1 1 auto; min-height: 0; height: 100%; }
-  .field-list { flex: 0 0 380px; height: 100%; }
+  .field-list { flex: 0 0 540px; height: 100%; }
+  .public-notes-head h2,
+  .public-notes-head span,
+  .public-note time,
+  .rank-now {
+    white-space: nowrap;
+  }
+  .public-notes-head span,
+  .public-note time { flex: 0 0 auto; }
+  .rank-now {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
+  }
 }
 
 .shoot-map.bare {
@@ -1165,10 +1178,48 @@ button:focus-visible, input:focus-visible {
 @media (min-width: 900px) and (max-width: 1069px) and (min-height: 700px) {
   .field { flex-direction: row; }
   .field-map { flex: 1 1 auto; min-height: 0; height: 100%; }
-  .field-list { flex: 0 0 340px; height: 100%; }
+  .field-list { flex: 0 0 480px; height: 100%; }
+  .public-notes-head h2,
+  .public-notes-head span,
+  .public-note time,
+  .rank-now { white-space: nowrap; }
 }
 
 @media (min-width: 900px) {
   .sidebar { display: flex; }
   .tabbar, .phone-title { display: none; }
+}
+
+/* 위쪽 줄 수 제한보다 나중에 적용해서, 넓은 목록의 제목과 시각이 한 줄에 남게 합니다. */
+@container (min-width: 860px) {
+  .public-notes-head,
+  .public-note-top { flex-wrap: nowrap; }
+  .public-notes-head h2,
+  .public-notes-head span,
+  .public-note time,
+  .rank-now {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .rank-now {
+    display: block;
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
+    overflow: visible;
+  }
+}
+
+@media (min-width: 900px) and (max-width: 1069px) and (min-height: 700px) {
+  .public-notes-head,
+  .public-note-top { flex-wrap: nowrap; }
+  .public-notes-head h2,
+  .public-notes-head span,
+  .public-note time,
+  .rank-now { flex: 0 0 auto; white-space: nowrap; }
+  .rank-now {
+    display: block;
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
+    overflow: visible;
+  }
 }

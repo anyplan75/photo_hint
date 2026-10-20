@@ -17,6 +17,32 @@ interface NominatimHit {
   boundingbox?: string[];
 }
 
+/** 좌표로 공개 지도의 주소를 찾습니다. 응답에 주소가 없으면 null입니다. */
+export async function reverseAddress(lat: number, lng: number, signal: AbortSignal): Promise<string | null> {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const url = new URL('https://nominatim.openstreetmap.org/reverse');
+  url.searchParams.set('format', 'jsonv2');
+  url.searchParams.set('lat', String(lat));
+  url.searchParams.set('lon', String(lng));
+  url.searchParams.set('zoom', '16');
+  url.searchParams.set('accept-language', 'ko');
+  const response = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+  if (!response.ok) return null;
+  const payload = (await response.json()) as { address?: Record<string, unknown> };
+  return shortReverse(payload.address);
+}
+
+function shortReverse(address: Record<string, unknown> | undefined): string | null {
+  if (!address) return null;
+  const text = (key: string) => (typeof address[key] === 'string' ? address[key].trim() : '');
+  const street = [text('road'), text('house_number')].filter(Boolean).join(' ');
+  const local = text('village') || text('hamlet') || text('suburb') || text('neighbourhood') || text('quarter');
+  const town = text('town') || text('city_district') || text('municipality');
+  const city = text('city') || text('county');
+  const parts = [...new Set([street, local, town, city].filter(Boolean))];
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
 export async function searchPlaces(query: string, signal: AbortSignal): Promise<SearchHit[]> {
   const url = new URL('https://nominatim.openstreetmap.org/search');
   url.searchParams.set('format', 'jsonv2');

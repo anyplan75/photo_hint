@@ -3,6 +3,7 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { shootingGuide, type GuideBlock } from './guide';
 import { mapboxPublicToken } from './mapbox-token';
+import { reverseAddress } from './search';
 import type { WindowKind } from './places';
 import { recommendTime, sunPlan } from './recommend';
 import { cardinal, type RankedSpot, type SceneChoice } from './region-places';
@@ -109,6 +110,7 @@ export function ShootMap({
       ignoreMapClick.current = false;
     }, 0);
   }
+  const [pointAddress, setPointAddress] = useState<{ id: string; text: string | null } | null>(null);
   const [view, setView] = useState<MapView>('2d');
   const [pitch, setPitch] = useState(0);
   const viewRef = useRef<MapView>('2d');
@@ -291,7 +293,35 @@ export function ShootMap({
     }
   }
 
-  const selectionView = describeSelection({ selected, spots, points, activeOsm, scene, basis, windowKind, now });
+  const selectedPoint = selected?.kind === 'point' ? points.find((item) => item.id === selected.id) : undefined;
+  useEffect(() => {
+    if (!selectedPoint || !Number.isFinite(selectedPoint.lat) || !Number.isFinite(selectedPoint.lng)) return;
+    const controller = new AbortController();
+    const id = selectedPoint.id;
+    setPointAddress({ id, text: null });
+    void reverseAddress(selectedPoint.lat, selectedPoint.lng, controller.signal)
+      .then((address) => {
+        if (controller.signal.aborted) return;
+        setPointAddress({ id, text: address ?? '' });
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setPointAddress({ id, text: '' });
+      });
+    return () => controller.abort();
+  }, [selectedPoint?.id, selectedPoint?.lat, selectedPoint?.lng]);
+
+  const selectionView = describeSelection({
+    selected,
+    spots,
+    points,
+    activeOsm,
+    scene,
+    basis,
+    windowKind,
+    now,
+    pointAddress: pointAddress && selectedPoint && pointAddress.id === selectedPoint.id ? pointAddress.text : null,
+  });
   const reported = selectionView
     ? `${selectionView.role}|${selectionView.name}|${selectionView.time}|${selectionView.address}|${selectionView.guide.lead}|${selectionView.guide.blocks.map((block) => block.heading).join(',')}`
     : '';
@@ -480,6 +510,12 @@ function showBuildings(map: mapboxgl.Map): void {
   }
 }
 
+function savedPointAddress(point: ShootPoint, lookedUp: string | null): string {
+  if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return '이 지점에 적어 둔 주소는 없습니다.';
+  if (lookedUp === null) return '주소를 찾는 중입니다.';
+  return lookedUp || '주소를 찾지 못했습니다.';
+}
+
 function hideBuildings(map: mapboxgl.Map): void {
   for (const id of extrusionIds(map)) map.setLayoutProperty(id, 'visibility', 'none');
 }
@@ -538,6 +574,7 @@ function describeSelection({
   basis,
   windowKind,
   now,
+  pointAddress = null,
 }: {
   selected: PinSelection | null;
   spots: RankedSpot[];
@@ -547,6 +584,8 @@ function describeSelection({
   basis: string;
   windowKind: WindowKind;
   now: Date;
+  /** 좌표로 찾아 온 주소. 빈 문자열이면 찾지 못한 상태입니다. */
+  pointAddress?: string | null;
 }): SelectionView | null {
   if (!selected) return null;
   if (selected.kind === 'spot') {
@@ -595,7 +634,7 @@ function describeSelection({
     role: 'point',
     roleLabel: '저장한 지점',
     name: point.name,
-    address: '이 지점에 적어 둔 주소는 없습니다.',
+    address: savedPointAddress(point, pointAddress),
     time: recommendTime(point.lat, point.lng, windowKind, now),
     coords: `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`,
     guide: {
