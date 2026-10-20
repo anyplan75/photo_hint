@@ -6,7 +6,9 @@ import { AiStatus } from './AiStatus';
 import { GuidePanel } from './GuidePanel';
 import { PublicNotes } from './PublicNotes';
 import { MyPlaces } from './MyPlaces';
+import { emptyRoad, type RoadOverlay } from './map-tools';
 import { RankList } from './RankList';
+import { RoadTools } from './RoadTools';
 import { ReferenceBook } from './ReferenceBook';
 import {
   inJejuBox,
@@ -54,6 +56,7 @@ export function App() {
   const [locationText, setLocationText] = useState('위치를 확인하는 중');
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [road, setRoad] = useState<RoadOverlay>(emptyRoad);
   const [spots, setSpots] = useState<Spot[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('지도를 준비하고 있습니다.');
@@ -393,6 +396,7 @@ export function App() {
                 fly={fly}
                 onDrag={(lat, lng) => setCenter({ lat, lng })}
                 selectRequest={selectRequest}
+                road={road}
                 external={{
                   points: sync.points,
                   mode: sync.mode,
@@ -403,6 +407,7 @@ export function App() {
               />
             </div>
             <div className="field-list">
+              <RoadTools center={center} onChange={setRoad} />
               <AiStatus places={ranked} usingHere={useMyLocation} />
               <form className="field-controls" onSubmit={findPlaces}>
                 <div className="control-search">

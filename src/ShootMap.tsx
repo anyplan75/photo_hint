@@ -3,6 +3,7 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { shootingGuide, type GuideBlock } from './guide';
 import { mapboxPublicToken } from './mapbox-token';
+import type { RoadOverlay } from './map-tools';
 import { reverseAddress } from './search';
 import type { WindowKind } from './places';
 import { recommendTime, sunPlan } from './recommend';
@@ -26,6 +27,10 @@ type MapView = '2d' | '3d';
 
 const DEM_SOURCE = 'geuttae-dem';
 const BUILDINGS_LAYER = 'geuttae-3d-buildings';
+const ROUTE_SOURCE = 'geuttae-route';
+const ROUTE_LAYER = 'geuttae-route-line';
+const SNAP_SOURCE = 'geuttae-snap-link';
+const SNAP_LAYER = 'geuttae-snap-link';
 
 export function ShootMap({
   region,
@@ -47,6 +52,7 @@ export function ShootMap({
   onDrag,
   selectRequest = null,
   external = null,
+  road = null,
 }: {
   region: string;
   center: { lat: number; lng: number } | null;
@@ -77,11 +83,15 @@ export function ShootMap({
     addPoint: (point: ShootPoint) => Promise<void>;
     removePoint: (id: string) => Promise<void>;
   } | null;
+  /** 주소 위치, 길에 붙인 점, 두 지점 사이 길입니다. 지도 위 조작 칸은 아닙니다. */
+  road?: RoadOverlay | null;
 }) {
   const token = mapboxPublicToken();
   const canvas = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
+  const roadMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  const roadHold = useRef(false);
   const onSelectRef = useRef(onSelect);
   const fitted = useRef('');
   onSelectRef.current = onSelect;
@@ -123,6 +133,7 @@ export function ShootMap({
     setPointError(null);
     setSelected(null);
     fitted.current = '';
+    roadHold.current = false;
   }, [region]);
 
   useEffect(() => {
@@ -256,7 +267,7 @@ export function ShootMap({
         markersRef.current.push(draftMarker(map, draft.lat, draft.lng));
       }
       const fitKey = `${region}:${spots.map((spot) => spot.osm).join(',')}:${points.map((point) => point.id).join(',')}`;
-      if (fitted.current !== fitKey) {
+      if (!roadHold.current && fitted.current !== fitKey) {
         fitted.current = fitKey;
         const tilted = viewRef.current === '3d';
         const camera = tilted ? { pitch: 60, bearing: -17 } : { pitch: 0, bearing: 0 };
@@ -270,6 +281,59 @@ export function ShootMap({
       map.off('load', draw);
     };
   }, [token, region, center, spots, activeOsm, points, draft, selected]);
+
+  const roadKey = road
+    ? `${road.frame}|${road.address?.lng ?? ''},${road.address?.lat ?? ''}|${road.raw?.lng ?? ''},${road.raw?.lat ?? ''}|${road.snapped?.lng ?? ''},${road.snapped?.lat ?? ''}|${road.route?.length ?? 0}`
+    : '';
+  const roadRef = useRef(road);
+  roadRef.current = road;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !token) return;
+    const drawRoad = () => {
+      const overlay = roadRef.current;
+      roadMarkersRef.current.forEach((marker) => marker.remove());
+      roadMarkersRef.current = [];
+      if (!overlay || overlay.frame === 0) {
+        roadHold.current = false;
+        setLine(map, ROUTE_SOURCE, ROUTE_LAYER, null, false);
+        setLine(map, SNAP_SOURCE, SNAP_LAYER, null, true);
+        return;
+      }
+      roadHold.current = true;
+      if (overlay.address) {
+        roadMarkersRef.current.push(roadMarker(map, overlay.address.lat, overlay.address.lng, 'map-pin address', overlay.address.label, { addressPin: overlay.address.label }));
+      }
+      if (overlay.raw) {
+        roadMarkersRef.current.push(roadMarker(map, overlay.raw.lat, overlay.raw.lng, 'map-pin raw', '흔들리는 점', { rawPin: 'true' }));
+      }
+      if (overlay.snapped) {
+        roadMarkersRef.current.push(roadMarker(map, overlay.snapped.lat, overlay.snapped.lng, 'map-pin snapped', '길에 붙인 점', { snappedPin: 'true' }));
+      }
+      setLine(map, ROUTE_SOURCE, ROUTE_LAYER, overlay.route, false);
+      const snapLink =
+        overlay.raw && overlay.snapped ? ([[overlay.raw.lng, overlay.raw.lat], [overlay.snapped.lng, overlay.snapped.lat]] as [number, number][]) : null;
+      setLine(map, SNAP_SOURCE, SNAP_LAYER, snapLink, true);
+      const bounds = new mapboxgl.LngLatBounds();
+      if (overlay.address) bounds.extend([overlay.address.lng, overlay.address.lat]);
+      if (overlay.raw) bounds.extend([overlay.raw.lng, overlay.raw.lat]);
+      if (overlay.snapped) bounds.extend([overlay.snapped.lng, overlay.snapped.lat]);
+      for (const pair of overlay.route ?? []) bounds.extend(pair);
+      if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 72, maxZoom: overlay.route && overlay.route.length > 1 ? 13.5 : 16, duration: 700 });
+    };
+    if (map.isStyleLoaded()) drawRoad();
+    else {
+      const once = () => {
+        if (!map.isStyleLoaded()) return;
+        map.off('idle', once);
+        drawRoad();
+      };
+      map.on('idle', once);
+      return () => {
+        map.off('idle', once);
+      };
+    }
+  }, [token, roadKey]);
 
   async function savePoint(event: FormEvent) {
     event.preventDefault();
@@ -341,6 +405,8 @@ export function ShootMap({
       data-map-pitch={pitch}
       data-sync={mode}
       data-selected-place={selectionView?.name ?? ''}
+      data-route={road?.route && road.route.length > 1 ? 'on' : 'off'}
+      data-route-count={road?.route?.length ?? 0}
     >
       <h2 id="map-title" className="sr">
         지도
@@ -555,6 +621,45 @@ function userMarker(map: mapboxgl.Map, point: ShootPoint, picked: boolean, onPic
     onPick();
   });
   return new mapboxgl.Marker({ element, anchor: 'center' }).setLngLat([point.lng, point.lat]).addTo(map);
+}
+
+function roadMarker(
+  map: mapboxgl.Map,
+  lat: number,
+  lng: number,
+  className: string,
+  label: string,
+  data: Record<string, string>,
+): mapboxgl.Marker {
+  const element = document.createElement('span');
+  element.className = className;
+  element.setAttribute('aria-label', label);
+  element.title = label;
+  for (const [key, value] of Object.entries(data)) element.dataset[key] = value;
+  element.addEventListener('click', (event) => event.stopPropagation());
+  return new mapboxgl.Marker({ element, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
+}
+
+function setLine(map: mapboxgl.Map, sourceId: string, layerId: string, coordinates: [number, number][] | null, dashed: boolean): void {
+  const data =
+    coordinates && coordinates.length > 1
+      ? { type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates } }
+      : { type: 'FeatureCollection' as const, features: [] };
+  const source = map.getSource(sourceId);
+  if (!source) map.addSource(sourceId, { type: 'geojson', data });
+  else (source as mapboxgl.GeoJSONSource).setData(data);
+  if (!map.getLayer(layerId)) {
+    map.addLayer({
+      id: layerId,
+      type: 'line',
+      source: sourceId,
+      slot: 'top',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: dashed
+        ? { 'line-color': '#ffb199', 'line-width': 3, 'line-dasharray': [2, 2] }
+        : { 'line-color': '#d6f25c', 'line-width': 6 },
+    });
+  }
 }
 
 function draftMarker(map: mapboxgl.Map, lat: number, lng: number): mapboxgl.Marker {

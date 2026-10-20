@@ -389,6 +389,9 @@ button, input { font: inherit; }
 }
 .map-pin.mine { background: #1f6f68; border-radius: 3px; }
 .map-pin.draft { background: #fff; border-color: #c9842a; }
+.map-pin.address { background: #d6f25c; border-color: #14200a; }
+.map-pin.raw { width: 18px; height: 18px; background: transparent; border: 2px dashed #ffb199; }
+.map-pin.snapped { background: #8ed4ff; border-color: #071018; box-shadow: 0 0 0 4px rgba(142, 212, 255, 0.45); }
 .map-pin.picked { box-shadow: 0 0 0 4px rgba(230, 177, 90, 0.95); }
 .map-info {
   position: absolute;
@@ -952,6 +955,30 @@ button:focus-visible, input:focus-visible {
   bottom: 12px;
   margin: 0;
 }
+
+.road-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 14px 0;
+}
+
+.road-tools h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  letter-spacing: -0.03em;
+}
+
+.road-tools p {
+  margin: 2px 0 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  word-break: keep-all;
+}
+
+.road-tools .field-btn { margin-top: 2px; }
+.road-ends { margin-bottom: 6px; }
 
 .field-controls {
   position: static;
