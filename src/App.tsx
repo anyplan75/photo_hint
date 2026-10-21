@@ -3,6 +3,7 @@ import { describeAdded, KNOWN_REFERENCES, weeklyPick, windowForScene } from './c
 import { activeScene, boxAround, rankPlaces, type RankedPlace } from './collect';
 import { loadFieldPrefs, writeFieldPrefs, type FieldPrefs } from './field-prefs';
 import { AiStatus } from './AiStatus';
+import { askForArCamera, askForArOrientation } from './ar-camera';
 import { ArView } from './ArView';
 import { GuidePanel } from './GuidePanel';
 import { PublicNotes } from './PublicNotes';
@@ -616,7 +617,20 @@ function Nav({ tab, onTab, includeAr = false }: { tab: Tab; onTab: (tab: Tab) =>
   return (
     <>
       {items.map((item) => (
-        <button key={item.id} type="button" className={tab === item.id ? 'on' : ''} data-tab={item.id} aria-pressed={tab === item.id} onClick={() => onTab(item.id)}>
+        <button
+          key={item.id}
+          type="button"
+          className={tab === item.id ? 'on' : ''}
+          data-tab={item.id}
+          aria-pressed={tab === item.id}
+          onClick={() => {
+            if (item.id === 'ar') {
+              askForArCamera();
+              askForArOrientation();
+            }
+            onTab(item.id);
+          }}
+        >
           {item.label}
         </button>
       ))}

@@ -10,6 +10,10 @@
         <string>여기야 여기</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>지금 있는 자리에서 해와 달의 방향, 그리고 가까운 촬영 장소를 계산합니다.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>AR에서 지금 보이는 풍경 위에 해와 달을 겹쳐 보여 줍니다.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>폰이 향한 방향에 맞춰 하늘의 해와 달 위치를 맞춥니다.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

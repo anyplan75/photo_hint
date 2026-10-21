@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { askForArCamera, askForArOrientation, cameraErrorName, cameraStillHeld, currentArCameraAsk, holdArCamera } from './ar-camera';
 import { drawArSky } from './sight-draw';
 import { CAMERA_SENSORS, fieldOfView, viewFocalMm, type SightOptics } from './sightline';
 import { skyBodies, skyMarks } from './sky-scene';
 import { clockFromMinutes, dateFromSeoul, daysInMonth, formatSeoulClock, seoulDateString, seoulMinutes, seoulParts } from './time';
 
-/** 카메라 위에 하늘을 겹칩니다. 권한이 없어도 지도가 보는 방향으로 그립니다. */
+type CameraPhase = 'needed' | 'asking' | 'live' | 'denied';
+
+/** 아이폰 카메라 위에 하늘을 겹칩니다. 카메라가 거절된 경우에만 어두운 하늘을 그립니다. */
 export function ArView({
   place,
   namedPlace,
@@ -24,7 +27,9 @@ export function ArView({
   const [headingOffset, setHeadingOffset] = useState(0);
   const [pitchOffset, setPitchOffset] = useState(0);
   const [panned, setPanned] = useState(false);
-  const [cameraOn, setCameraOn] = useState(false);
+  const [cameraPhase, setCameraPhase] = useState<CameraPhase>(() => (currentArCameraAsk() ? 'asking' : 'needed'));
+  const [cameraError, setCameraError] = useState('');
+  const [cameraAsk, setCameraAsk] = useState(() => currentArCameraAsk()?.id ?? 0);
   const [oriented, setOriented] = useState(false);
   const [deviceHeading, setDeviceHeading] = useState<number | null>(null);
   const [devicePitch, setDevicePitch] = useState<number | null>(null);
@@ -46,28 +51,47 @@ export function ArView({
   const parts = seoulParts(when);
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !navigator.mediaDevices?.getUserMedia) return;
-    let stream: MediaStream | null = null;
+    const ask = currentArCameraAsk();
+    if (!ask) return;
+    const release = holdArCamera(ask.id);
     let stopped = false;
-    void navigator.mediaDevices
-      .getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+    setCameraPhase('asking');
+    setCameraError('');
+    const stopIfUnused = (next: MediaStream) => {
+      if (cameraStillHeld(ask.id)) return;
+      next.getTracks().forEach((track) => track.stop());
+    };
+    ask.promise
       .then((next) => {
-        if (stopped) {
-          next.getTracks().forEach((track) => track.stop());
+        const video = videoRef.current;
+        if (stopped || !video) {
+          stopIfUnused(next);
           return;
         }
-        stream = next;
         video.srcObject = next;
+        video.muted = true;
+        video.playsInline = true;
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
         void video.play().catch(() => undefined);
-        setCameraOn(true);
+        setCameraPhase('live');
       })
-      .catch(() => setCameraOn(false));
+      .catch((error: unknown) => {
+        if (stopped) return;
+        setCameraError(cameraErrorName(error));
+        setCameraPhase('denied');
+      });
     return () => {
       stopped = true;
-      stream?.getTracks().forEach((track) => track.stop());
+      release();
+      const video = videoRef.current;
+      const stream = video?.srcObject;
+      if (video && stream instanceof MediaStream && !cameraStillHeld(ask.id)) {
+        stream.getTracks().forEach((track) => track.stop());
+        video.srcObject = null;
+      }
     };
-  }, []);
+  }, [cameraAsk]);
 
   useEffect(() => {
     const onOrientation = (event: DeviceOrientationEvent) => {
@@ -108,14 +132,14 @@ export function ArView({
         aimBearing: optics?.bearing ?? null,
         aimAlt: optics?.sightAlt ?? 0,
         skyline: optics?.skyline ?? null,
-        showVideo: cameraOn,
+        showVideo: cameraPhase === 'live',
       });
     };
     draw();
     const observer = new ResizeObserver(draw);
     observer.observe(box);
     return () => observer.disconnect();
-  }, [scene, heading, pitch, hFov, vFov, sensor, optics, cameraOn]);
+  }, [scene, heading, pitch, hFov, vFov, sensor, optics, cameraPhase]);
 
   function applyDay(day: number) {
     const [year, month] = safeDate.split('-').map(Number);
@@ -133,19 +157,15 @@ export function ArView({
     setPanned(false);
   }
 
-  async function allowOrientation() {
-    const ask = (DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> }).requestPermission;
-    if (!ask) return;
-    try {
-      await ask();
-    } catch {
-      setOriented(false);
-    }
+  function retryCamera() {
+    askForArOrientation();
+    setCameraAsk(askForArCamera().id);
   }
 
-  const permission = !cameraOn && !oriented
+  const cameraDenied = cameraPhase === 'denied' || cameraPhase === 'needed';
+  const permission = cameraDenied && !oriented
     ? '카메라와 기기 방향을 받지 못했습니다. 작가에서 대상을 보는 방향으로 어두운 하늘에 그립니다.'
-    : !cameraOn
+    : cameraDenied
       ? '카메라를 받지 못했습니다. 어두운 하늘에 같은 방향으로 그립니다.'
       : !oriented
         ? '기기 방향을 받지 못했습니다. 작가에서 대상을 보는 방향으로 맞춥니다.'
@@ -168,6 +188,8 @@ export function ArView({
       data-ar-sun-alt={scene.sun.altitude.toFixed(2)}
       data-ar-moon-alt={scene.moon.altitude.toFixed(2)}
       data-ar-lens={viewMm}
+      data-ar-camera={cameraPhase}
+      data-ar-camera-error={cameraError}
       aria-label="AR"
     >
       <div
@@ -192,7 +214,7 @@ export function ArView({
           drag.current = null;
         }}
       >
-        <video ref={videoRef} muted playsInline autoPlay />
+        <video ref={videoRef} data-ar-video muted playsInline autoPlay />
         <canvas ref={canvasRef} data-ar-sky />
       </div>
       {note ? (
@@ -218,7 +240,12 @@ export function ArView({
         <button type="button" className="field-btn sea" data-ar-now onClick={backToNow}>
           현재
         </button>
-        <button type="button" className="field-btn" onClick={() => void allowOrientation()}>
+        {cameraDenied ? (
+          <button type="button" className="field-btn sea" data-ar-camera-retry onClick={retryCamera}>
+            카메라 다시 요청
+          </button>
+        ) : null}
+        <button type="button" className="field-btn" onClick={() => askForArOrientation()}>
           방향 허용
         </button>
         <span className="ar-aim">방향 {heading.toFixed(0)}°</span>
