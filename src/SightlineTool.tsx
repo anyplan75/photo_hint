@@ -265,7 +265,7 @@ export function SightlineTool({
         작가 {placeText(photographer)}
         <br />
         대상 {placeText(subject)}
-        {placing ? ` · 지도를 눌러 ${placing === 'photographer' ? '작가' : '대상'}를 놓으세요.` : ''}
+        {placing ? ` · 지도를 눌러 ${placing === 'photographer' ? '작가를' : '대상을'} 놓으세요.` : ''}
       </p>
       <div className="sight-row">
         <button type="button" className="field-btn" data-subject-kind="person" aria-pressed={kind === 'person'} onClick={() => setKind('person')}>

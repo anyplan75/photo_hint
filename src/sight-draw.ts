@@ -319,7 +319,7 @@ function drawDisc(
   if (x + radius < 0 || x - radius > width || y + radius < 0 || y - radius > height) return;
   if (icon.kind === 'moon') {
     paintMoon(ctx, x, y, radius, icon.moonShapeDeg ?? 180, icon.limbRad ?? 0);
-    if (radius > 11) label(ctx, `${icon.moonStage}`, x, y + 3);
+    if (radius >= 8) label(ctx, `${icon.moonStage}`, x, y - radius - 3);
     return;
   }
   ctx.beginPath();
@@ -383,6 +383,10 @@ function paintMoon(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius
   const pixels = Math.min(size, 96);
   const scale = (radius * 2) / pixels;
   ctx.save();
+  ctx.beginPath();
+  ctx.fillStyle = '#1c2438';
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
   for (let row = 0; row < pixels; row += 1) {
     for (let col = 0; col < pixels; col += 1) {
       const x = (col + 0.5 - pixels / 2) * scale;
