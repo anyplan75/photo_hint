@@ -479,8 +479,10 @@ export function ShootMap({
         const moonEnd = rayEnd(map, origin, sky.moon.azimuth);
         setLine(map, SUN_RAY_SOURCE, SUN_RAY_LAYER, [[origin.lng, origin.lat], [sunEnd.lng, sunEnd.lat]], false, SUN_MARK_COLOR, 4);
         setLine(map, MOON_RAY_SOURCE, MOON_RAY_LAYER, [[origin.lng, origin.lat], [moonEnd.lng, moonEnd.lat]], false, MOON_MARK_COLOR, 4);
-        rayMarkersRef.current.push(rayTag(map, sunEnd.lat, sunEnd.lng, '해', SUN_MARK_COLOR, { sunRay: 'true' }));
-        rayMarkersRef.current.push(rayTag(map, moonEnd.lat, moonEnd.lng, '달', MOON_MARK_COLOR, { moonRay: 'true' }));
+        const sunLabel = pointFromBearing(origin.lat, origin.lng, sky.sun.azimuth, edgeMeters(map, origin, sky.sun.azimuth) * 0.62);
+        const moonLabel = pointFromBearing(origin.lat, origin.lng, sky.moon.azimuth, edgeMeters(map, origin, sky.moon.azimuth) * 0.62);
+        rayMarkersRef.current.push(rayTag(map, sunLabel.lat, sunLabel.lng, '해', SUN_MARK_COLOR, { sunRay: 'true' }));
+        rayMarkersRef.current.push(rayTag(map, moonLabel.lat, moonLabel.lng, '달', MOON_MARK_COLOR, { moonRay: 'true' }));
       }
       if (!origin || !subject) {
         for (const mm of CAMERA_FOV_MM) setLine(map, fovSource(mm), fovLayer(mm), null, false, FOV_LINE_COLOR, 1.25);
@@ -506,7 +508,7 @@ export function ShootMap({
           FOV_LINE_COLOR,
           1.25,
         );
-        const labelAt = pointFromBearing(origin.lat, origin.lng, bearing, reach * (0.22 + index * 0.14));
+        const labelAt = pointFromBearing(origin.lat, origin.lng, bearing, reach * (0.84 - index * 0.11));
         rayMarkersRef.current.push(rayTag(map, labelAt.lat, labelAt.lng, String(mm), FOV_LINE_COLOR, { fovMm: String(mm) }));
       });
     };

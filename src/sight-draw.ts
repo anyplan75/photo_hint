@@ -517,8 +517,10 @@ function drawBodyMark(
   }
   const edge = edgePoint(cue.offsetDeg, cue.relAlt, hFov, vFov, width, height, 22, pxPerDeg);
   drawArrow(ctx, edge.x, edge.y, edge.outX, edge.outY, color);
-  const inward = 18;
-  haloLabel(ctx, cue.text, edge.x - edge.outX * inward, edge.y - edge.outY * inward, color);
+  const inward = 22 + cue.text.length * 4.4;
+  const labelX = Math.min(width - 78, Math.max(78, edge.x - edge.outX * inward));
+  const labelY = Math.min(height - 14, Math.max(16, edge.y - edge.outY * inward));
+  haloLabel(ctx, cue.text, labelX, labelY, color);
 }
 
 function edgePoint(
