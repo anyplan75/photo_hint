@@ -7,7 +7,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // 맥에서 아이폰 앱으로 열릴 때만, 예전에 저장한 좁은 창 크기를 다시 쓰지 않습니다.
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            let defaults = UserDefaults.standard
+            defaults.set(true, forKey: "ApplePersistenceIgnoreState")
+            for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("NSWindow Frame") {
+                defaults.removeObject(forKey: key)
+            }
+        }
         return true
     }
 
