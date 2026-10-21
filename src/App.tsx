@@ -379,17 +379,19 @@ export function App() {
 
   const weeklyShown = sceneOverride ?? pick.scene;
   const listTitle = useMyLocation ? '내 주변' : regionTitle;
+  const phone = usePhoneLayout();
+  const shown: Tab = !phone && tab === 'ar' ? 'map' : tab;
 
   return (
-    <main className="app shell" data-shell={tab}>
+    <main className="app shell" data-shell={shown} data-phone={phone ? 'yes' : 'no'}>
       <aside className="sidebar">
         <p className="sidebar-mark">촬영 참고</p>
         <p className="sidebar-name">여기야 여기</p>
-        <Nav tab={tab} onTab={setTab} />
+        <Nav tab={shown} onTab={setTab} />
       </aside>
       <div className="stage">
         <h1 className="phone-title">여기야 여기</h1>
-        {tab === 'map' && (
+        {shown === 'map' && (
           <div className="field">
             <div className="field-map">
               <ShootMap
@@ -563,14 +565,14 @@ export function App() {
             </div>
           </div>
         )}
-        {tab === 'ar' && (
+        {shown === 'ar' && (
           <ArView
             place={photographer ?? { lat: center.lat, lng: center.lng }}
             namedPlace={photographer !== null}
             optics={optics}
           />
         )}
-        {tab === 'book' && (
+        {shown === 'book' && (
           <ReferenceBook
             pick={{ ...pick, scene: weeklyShown }}
             known={KNOWN_REFERENCES.filter((item) => item.id !== pick.id)}
@@ -583,7 +585,7 @@ export function App() {
             onRemove={removeReference}
           />
         )}
-        {tab === 'mine' && (
+        {shown === 'mine' && (
           <MyPlaces
             points={sync.points}
             onAnalyze={openPoint}
@@ -592,21 +594,21 @@ export function App() {
             }}
           />
         )}
-        {tab === 'settings' && (
+        {shown === 'settings' && (
           <SettingsScreen session={session} preferScenes={prefs.preferScenes} onToggleScene={toggleScene} status={status} />
         )}
       </div>
       <nav className="tabbar" aria-label="화면 이동">
-        <Nav tab={tab} onTab={setTab} />
+        <Nav tab={shown} onTab={setTab} includeAr={phone} />
       </nav>
     </main>
   );
 }
 
-function Nav({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
+function Nav({ tab, onTab, includeAr = false }: { tab: Tab; onTab: (tab: Tab) => void; includeAr?: boolean }) {
   const items: { id: Tab; label: string }[] = [
     { id: 'map', label: '지도' },
-    { id: 'ar', label: 'AR' },
+    ...(includeAr ? [{ id: 'ar' as const, label: 'AR' }] : []),
     { id: 'book', label: '참고' },
     { id: 'mine', label: '내 자리' },
     { id: 'settings', label: '설정' },
@@ -620,6 +622,20 @@ function Nav({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
       ))}
     </>
   );
+}
+
+/** 아이폰 너비입니다. 아이패드와 맥의 넓은 창은 왼쪽 목록을 씁니다. */
+function usePhoneLayout(): boolean {
+  const query = '(max-width: 899px) and (max-height: 699px), (max-width: 743px)';
+  const [phone, setPhone] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const apply = () => setPhone(media.matches);
+    apply();
+    media.addEventListener('change', apply);
+    return () => media.removeEventListener('change', apply);
+  }, []);
+  return phone;
 }
 
 function guidePlaceCall(places: RankedPlace[], request: { kind: 'spot'; osm: string } | { kind: 'point'; id: string } | null): string {
