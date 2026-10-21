@@ -956,6 +956,71 @@ button:focus-visible, input:focus-visible {
   margin: 0;
 }
 
+.map-pin.author,
+.map-pin.subject {
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 22px;
+  text-align: center;
+}
+.map-pin.author { background: #d6f25c; color: #14200a; border-color: #14200a; }
+.map-pin.subject { background: #ffb199; color: #1a0a06; border-color: #1a0a06; }
+.map-pin.ridge {
+  width: 14px;
+  height: 14px;
+  background: transparent;
+  border: 2px solid #ff6b4a;
+}
+.shoot-map[data-placing='photographer'] .map-canvas,
+.shoot-map[data-placing='subject'] .map-canvas { cursor: crosshair; }
+
+.sightline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 14px 0;
+}
+.sightline h3 { margin: 0; font-size: 0.98rem; letter-spacing: -0.03em; }
+.sightline p { margin: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.45; word-break: keep-all; }
+.sight-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sight-row label { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 0.78rem; font-weight: 700; }
+.sight-row input[type='date'],
+.sight-row input[type='number'],
+.sight-row input[inputmode='decimal'],
+.sight-row select {
+  min-height: 36px;
+  border: 0;
+  border-radius: 9px;
+  background: #081217;
+  color: var(--ink);
+  padding: 0 8px;
+}
+.sight-row input[inputmode='decimal'] { width: 64px; }
+.sight-row input[type='number'] { width: 72px; }
+.sight-row select { flex: 1; min-width: 0; max-width: 100%; }
+.sight-scrub { flex: 1; min-width: 120px; }
+.sight-scrub input { flex: 1; width: 100%; }
+.sight-read { color: var(--ink); }
+.sight-frame-box {
+  width: 100%;
+  max-height: 280px;
+  background: #0d1424;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.sight-frame-box canvas { display: block; width: 100%; height: 100%; }
+.sight-strip, .sight-profile {
+  display: block;
+  width: 100%;
+  border-radius: 12px;
+  background: #101820;
+}
+.sight-strip { height: 64px; }
+.sight-profile { height: 96px; }
+.sight-row .field-btn[aria-pressed='true'] { background: var(--gold); color: var(--gold-ink); }
+
 .road-tools {
   display: flex;
   flex-direction: column;

@@ -31,6 +31,8 @@ const ROUTE_SOURCE = 'geuttae-route';
 const ROUTE_LAYER = 'geuttae-route-line';
 const SNAP_SOURCE = 'geuttae-snap-link';
 const SNAP_LAYER = 'geuttae-snap-link';
+const SIGHT_SOURCE = 'geuttae-sight';
+const SIGHT_LAYER = 'geuttae-sight-line';
 
 export function ShootMap({
   region,
@@ -53,6 +55,8 @@ export function ShootMap({
   selectRequest = null,
   external = null,
   road = null,
+  sight = null,
+  onPlaceSight,
 }: {
   region: string;
   center: { lat: number; lng: number } | null;
@@ -85,6 +89,14 @@ export function ShootMap({
   } | null;
   /** 주소 위치, 길에 붙인 점, 두 지점 사이 길입니다. 지도 위 조작 칸은 아닙니다. */
   road?: RoadOverlay | null;
+  /** 작가·대상·능선입니다. 조작 칸은 지도 밖에 둡니다. */
+  sight?: {
+    photographer: { lat: number; lng: number } | null;
+    subject: { lat: number; lng: number } | null;
+    ridge: { lat: number; lng: number } | null;
+    placing: 'photographer' | 'subject' | null;
+  } | null;
+  onPlaceSight?: (lat: number, lng: number) => void;
 }) {
   const token = mapboxPublicToken();
   const canvas = useRef<HTMLDivElement>(null);
@@ -103,6 +115,11 @@ export function ShootMap({
   const removePoint = external?.removePoint ?? internal.removePoint;
   const onDragRef = useRef(onDrag);
   onDragRef.current = onDrag;
+  const onPlaceSightRef = useRef(onPlaceSight);
+  onPlaceSightRef.current = onPlaceSight;
+  const placingRef = useRef(sight?.placing ?? null);
+  placingRef.current = sight?.placing ?? null;
+  const sightMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const [draft, setDraft] = useState<{ lat: number; lng: number } | null>(null);
   const [name, setName] = useState('');
   const [pointError, setPointError] = useState<string | null>(null);
@@ -123,6 +140,7 @@ export function ShootMap({
   const [pointAddress, setPointAddress] = useState<{ id: string; text: string | null } | null>(null);
   const [view, setView] = useState<MapView>('2d');
   const [pitch, setPitch] = useState(0);
+  const sightFitRef = useRef('');
   const viewRef = useRef<MapView>('2d');
   const viewReady = useRef(false);
   viewRef.current = view;
@@ -195,6 +213,10 @@ export function ShootMap({
         return;
       }
       if (target instanceof Element && target.closest('.map-pin, .map-info')) return;
+      if (placingRef.current) {
+        onPlaceSightRef.current?.(event.lngLat.lat, event.lngLat.lng);
+        return;
+      }
       setSelected(null);
       setDraft({ lat: event.lngLat.lat, lng: event.lngLat.lng });
       setName('');
@@ -209,6 +231,8 @@ export function ShootMap({
       observer.disconnect();
       markersRef.current.forEach((marker) => marker.remove());
       markersRef.current = [];
+      sightMarkersRef.current.forEach((marker) => marker.remove());
+      sightMarkersRef.current = [];
       map.remove();
       mapRef.current = null;
     };
@@ -335,6 +359,52 @@ export function ShootMap({
     }
   }, [token, roadKey]);
 
+  const sightKey = sight
+    ? `${sight.photographer?.lng ?? ''},${sight.photographer?.lat ?? ''}|${sight.subject?.lng ?? ''},${sight.subject?.lat ?? ''}|${sight.ridge?.lng ?? ''},${sight.ridge?.lat ?? ''}`
+    : '';
+  const sightRef = useRef(sight);
+  sightRef.current = sight;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !token) return;
+    const drawSight = () => {
+      const overlay = sightRef.current;
+      sightMarkersRef.current.forEach((marker) => marker.remove());
+      sightMarkersRef.current = [];
+      if (!overlay) {
+        setLine(map, SIGHT_SOURCE, SIGHT_LAYER, null, true);
+        return;
+      }
+      if (overlay.photographer) {
+        sightMarkersRef.current.push(sightMarker(map, overlay.photographer.lat, overlay.photographer.lng, 'author', '작가'));
+      }
+      if (overlay.subject) {
+        sightMarkersRef.current.push(sightMarker(map, overlay.subject.lat, overlay.subject.lng, 'subject', '대상'));
+      }
+      if (overlay.ridge) {
+        sightMarkersRef.current.push(sightMarker(map, overlay.ridge.lat, overlay.ridge.lng, 'ridge', '능선'));
+      }
+      const line =
+        overlay.photographer && overlay.subject
+          ? ([[overlay.photographer.lng, overlay.photographer.lat], [overlay.subject.lng, overlay.subject.lat]] as [number, number][])
+          : null;
+      setLine(map, SIGHT_SOURCE, SIGHT_LAYER, line, true, '#8ed4ff');
+      const pairKey = line ? `${line[0].join(',')}|${line[1].join(',')}` : '';
+      if (line && sightFitRef.current !== pairKey) {
+        sightFitRef.current = pairKey;
+        const bounds = new mapboxgl.LngLatBounds();
+        bounds.extend(line[0]);
+        bounds.extend(line[1]);
+        map.fitBounds(bounds, { padding: 80, maxZoom: 13, duration: 600 });
+      }
+    };
+    if (map.isStyleLoaded()) drawSight();
+    else map.once('load', drawSight);
+    return () => {
+      map.off('load', drawSight);
+    };
+  }, [token, sightKey]);
+
   async function savePoint(event: FormEvent) {
     event.preventDefault();
     const trimmed = name.trim();
@@ -407,6 +477,8 @@ export function ShootMap({
       data-selected-place={selectionView?.name ?? ''}
       data-route={road?.route && road.route.length > 1 ? 'on' : 'off'}
       data-route-count={road?.route?.length ?? 0}
+      data-placing={sight?.placing ?? ''}
+      data-sight-line={sight?.photographer && sight?.subject ? 'on' : 'off'}
     >
       <h2 id="map-title" className="sr">
         지도
@@ -640,7 +712,24 @@ function roadMarker(
   return new mapboxgl.Marker({ element, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
 }
 
-function setLine(map: mapboxgl.Map, sourceId: string, layerId: string, coordinates: [number, number][] | null, dashed: boolean): void {
+function sightMarker(map: mapboxgl.Map, lat: number, lng: number, role: 'author' | 'subject' | 'ridge', label: string): mapboxgl.Marker {
+  const element = document.createElement('span');
+  element.className = `map-pin ${role}`;
+  element.dataset.sightPin = role;
+  element.textContent = role === 'ridge' ? '' : label.slice(0, 1);
+  element.setAttribute('aria-label', label);
+  element.addEventListener('click', (event) => event.stopPropagation());
+  return new mapboxgl.Marker({ element, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
+}
+
+function setLine(
+  map: mapboxgl.Map,
+  sourceId: string,
+  layerId: string,
+  coordinates: [number, number][] | null,
+  dashed: boolean,
+  color?: string,
+): void {
   const data =
     coordinates && coordinates.length > 1
       ? { type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates } }
@@ -648,6 +737,9 @@ function setLine(map: mapboxgl.Map, sourceId: string, layerId: string, coordinat
   const source = map.getSource(sourceId);
   if (!source) map.addSource(sourceId, { type: 'geojson', data });
   else (source as mapboxgl.GeoJSONSource).setData(data);
+  const paint = dashed
+    ? { 'line-color': color ?? '#ffb199', 'line-width': 3, 'line-dasharray': [2, 2] }
+    : { 'line-color': color ?? '#d6f25c', 'line-width': 6 };
   if (!map.getLayer(layerId)) {
     map.addLayer({
       id: layerId,
@@ -655,11 +747,11 @@ function setLine(map: mapboxgl.Map, sourceId: string, layerId: string, coordinat
       source: sourceId,
       slot: 'top',
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: dashed
-        ? { 'line-color': '#ffb199', 'line-width': 3, 'line-dasharray': [2, 2] }
-        : { 'line-color': '#d6f25c', 'line-width': 6 },
+      paint,
     });
+    return;
   }
+  map.setPaintProperty(layerId, 'line-color', paint['line-color']);
 }
 
 function draftMarker(map: mapboxgl.Map, lat: number, lng: number): mapboxgl.Marker {

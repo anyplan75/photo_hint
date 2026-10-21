@@ -8,7 +8,7 @@
     "build:ios": "CAPACITOR=1 tsc --noEmit && CAPACITOR=1 vite build && cap sync ios",
     "build:mac": "MACOS=1 tsc --noEmit && MACOS=1 vite build && node scripts/sync-macos.mjs",
     "preview": "vite preview",
-    "check": "tsx scripts/check-sky.ts"
+    "check": "tsx scripts/check-sky.ts && tsx scripts/check-sightline.ts"
   },
   "dependencies": {
     "@capacitor/core": "^8.5.3",

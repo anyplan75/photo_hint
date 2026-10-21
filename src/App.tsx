@@ -23,6 +23,8 @@ import { searchPlaces, type SearchHit } from './search';
 import { useSession } from './session';
 import { SettingsScreen } from './SettingsScreen';
 import { ShootMap, type SelectionView } from './ShootMap';
+import { SightlineTool, type SightChoice } from './SightlineTool';
+import type { SightPlace } from './sightline';
 import type { ShootPoint } from './shoot-points';
 import { parseReferenceAddress, referenceKey } from './sources';
 import {
@@ -57,6 +59,10 @@ export function App() {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [road, setRoad] = useState<RoadOverlay>(emptyRoad);
+  const [photographer, setPhotographer] = useState<SightPlace | null>(null);
+  const [subjectPlace, setSubjectPlace] = useState<SightPlace | null>(null);
+  const [placing, setPlacing] = useState<'photographer' | 'subject' | null>(null);
+  const [ridge, setRidge] = useState<SightPlace | null>(null);
   const [spots, setSpots] = useState<Spot[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('지도를 준비하고 있습니다.');
@@ -98,6 +104,13 @@ export function App() {
     [spots, sync.points, scene, center, prefs.radiusKm, windowKind, now],
   );
   const rankedSpots = ranked.flatMap((place) => (place.spot ? [place.spot] : []));
+  const sightChoices = useMemo<SightChoice[]>(
+    () => [
+      ...rankedSpots.map((spot) => ({ id: `spot:${spot.osm}`, name: spot.name, lat: spot.lat, lng: spot.lng })),
+      ...sync.points.map((point) => ({ id: `point:${point.id}`, name: point.name, lat: point.lat, lng: point.lng })),
+    ],
+    [rankedSpots, sync.points],
+  );
   const weeklyOsm = ranked.find((place) => place.spot?.matchesScene)?.spot?.osm ?? '';
 
   const rememberView = useCallback((view: SelectionView | null) => {
@@ -397,6 +410,13 @@ export function App() {
                 onDrag={(lat, lng) => setCenter({ lat, lng })}
                 selectRequest={selectRequest}
                 road={road}
+                sight={{ photographer, subject: subjectPlace, ridge, placing }}
+                onPlaceSight={(lat, lng) => {
+                  const place = { lat, lng, name: null };
+                  if (placing === 'photographer') setPhotographer(place);
+                  if (placing === 'subject') setSubjectPlace(place);
+                  setPlacing(null);
+                }}
                 external={{
                   points: sync.points,
                   mode: sync.mode,
@@ -407,6 +427,22 @@ export function App() {
               />
             </div>
             <div className="field-list">
+              <SightlineTool
+                photographer={photographer}
+                subject={subjectPlace}
+                placing={placing}
+                choices={sightChoices}
+                onPhotographer={(place) => {
+                  setPhotographer(place);
+                  setPlacing(null);
+                }}
+                onSubject={(place) => {
+                  setSubjectPlace(place);
+                  setPlacing(null);
+                }}
+                onPlacing={setPlacing}
+                onRidge={setRidge}
+              />
               <RoadTools center={center} onChange={setRoad} />
               <AiStatus places={ranked} usingHere={useMyLocation} />
               <form className="field-controls" onSubmit={findPlaces}>
