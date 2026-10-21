@@ -23,9 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     private var webView: WKWebView?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let window = NSWindow(
-            contentRect: screen,
+            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -35,34 +34,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let pageColor = NSColor(srgbRed: 8 / 255, green: 18 / 255, blue: 23 / 255, alpha: 1)
         window.backgroundColor = pageColor
         window.delegate = self
-        // 메뉴 막대와 독 사이의 보이는 화면을 가로·세로로 끝까지 채웁니다.
-        // 예전 이름에 저장된 1440×900 창은 다시 열지 않습니다.
-        window.setFrame(screen, display: true)
-        window.setFrameAutosaveName("GeuttaeMainWindowFill")
+        // 예전에 저장한 좁은 창 크기를 다시 열지 않습니다.
+        window.isRestorable = false
 
-        let content = window.contentView!
-        let web = WKWebView(frame: content.bounds, configuration: WKWebViewConfiguration())
-        // 자동 레이아웃은 웹 화면을 창 한가운데의 좁은 너비로 남깁니다. 창 크기에 맞춰 늘립니다.
-        web.autoresizingMask = [.width, .height]
+        let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         web.navigationDelegate = self
         web.underPageBackgroundColor = pageColor
-        content.addSubview(web)
-        web.frame = content.bounds
+        // 웹 화면이 창 내용 자체입니다. 하위 뷰로 두면 넓은 창 한가운데에 좁은 칸만 남습니다.
+        window.contentView = web
         web.load(URLRequest(url: site))
 
+        self.window = window
+        self.webView = web
+        fillVisibleScreen(window)
         window.makeKeyAndOrderFront(nil)
+        fillVisibleScreen(window)
         if #available(macOS 14.0, *) {
             NSApp.activate()
         } else {
             NSApp.activate(ignoringOtherApps: true)
         }
-        self.window = window
-        self.webView = web
+        // 시스템이 창을 띄운 뒤에 크기를 되돌리는 경우가 있어 한 번 더 맞춥니다.
+        DispatchQueue.main.async { [weak self] in
+            guard let window = self?.window else { return }
+            self?.fillVisibleScreen(window)
+        }
     }
 
-    func windowDidResize(_ notification: Notification) {
-        guard let content = window?.contentView, let webView else { return }
-        webView.frame = content.bounds
+    /// 지금 포인터가 있는 화면에서, 메뉴 막대와 독 사이의 보이는 영역을 창으로 채웁니다.
+    private func fillVisibleScreen(_ window: NSWindow) {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) }
+            ?? window.screen
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let visible = screen?.visibleFrame else { return }
+        window.setFrame(visible, display: true)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
