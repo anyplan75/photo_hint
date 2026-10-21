@@ -1,8 +1,13 @@
 import {
   angularDiameterDegrees,
+  CAMERA_FOV_MM,
   fieldOfView,
+  FOV_LINE_COLOR,
+  MOON_MARK_COLOR,
   SENSOR_HEIGHT_MM,
   SENSOR_WIDTH_MM,
+  skyBodyCue,
+  SUN_MARK_COLOR,
   type PersonShape,
   type SightProfile,
   type SkylineColumn,
@@ -88,6 +93,10 @@ export function drawLensFrame(
   }
   if (skyline && skyline.length > 1) drawSkyline(ctx, width, height, centerAlt, pxPerDeg, skyline, true);
   ctx.restore();
+  if (scene) {
+    drawBodyMark(ctx, scene.sun, SUN_MARK_COLOR, bearing, centerAlt, hFov, vFov, pxPerDeg, width, height, skyline);
+    drawBodyMark(ctx, scene.moon, MOON_MARK_COLOR, bearing, centerAlt, hFov, vFov, pxPerDeg, width, height, skyline);
+  }
   drawBrackets(ctx, width, height);
   drawFocalFrames(ctx, width, height, hFov, vFov, focals, sensorWidthMm, sensorHeightMm);
   ctx.restore();
@@ -474,9 +483,95 @@ function drawDisc(
     return;
   }
   ctx.beginPath();
-  ctx.fillStyle = '#ffe28a';
+  ctx.fillStyle = SUN_MARK_COLOR;
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.fill();
+}
+
+function drawBodyMark(
+  ctx: CanvasRenderingContext2D,
+  icon: SkyIcon,
+  color: string,
+  bearing: number,
+  centerAlt: number,
+  hFov: number,
+  vFov: number,
+  pxPerDeg: number,
+  width: number,
+  height: number,
+  skyline: SkylineColumn[] | null,
+): void {
+  const cue = skyBodyCue(icon.name, icon.azimuth, icon.altitude, bearing, centerAlt, hFov, vFov, skyline);
+  if (cue.inside) {
+    const x = width / 2 + cue.offsetDeg * pxPerDeg;
+    const y = height / 2 - cue.relAlt * pxPerDeg;
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.arc(x, y, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#081018';
+    ctx.stroke();
+    haloLabel(ctx, cue.text, x, y - 16, color);
+    return;
+  }
+  const edge = edgePoint(cue.offsetDeg, cue.relAlt, hFov, vFov, width, height, 22, pxPerDeg);
+  drawArrow(ctx, edge.x, edge.y, edge.outX, edge.outY, color);
+  const inward = 18;
+  haloLabel(ctx, cue.text, edge.x - edge.outX * inward, edge.y - edge.outY * inward, color);
+}
+
+function edgePoint(
+  offsetDeg: number,
+  relAlt: number,
+  hFov: number,
+  vFov: number,
+  width: number,
+  height: number,
+  inset: number,
+  pxPerDeg: number,
+  pxPerDegY = pxPerDeg,
+): { x: number; y: number; outX: number; outY: number } {
+  const halfW = Math.max(0.001, hFov / 2);
+  const halfH = Math.max(0.001, vFov / 2);
+  const scaleX = Math.abs(offsetDeg) < 1e-6 ? Number.POSITIVE_INFINITY : halfW / Math.abs(offsetDeg);
+  const scaleY = Math.abs(relAlt) < 1e-6 ? Number.POSITIVE_INFINITY : halfH / Math.abs(relAlt);
+  const scale = Math.min(scaleX, scaleY);
+  const cx = width / 2;
+  const cy = height / 2;
+  let x = cx + offsetDeg * scale * pxPerDeg;
+  let y = cy - relAlt * scale * pxPerDegY;
+  const vx = x - cx;
+  const vy = y - cy;
+  const len = Math.hypot(vx, vy) || 1;
+  const pull = Math.min(inset, len * 0.4);
+  x -= (vx / len) * pull;
+  y -= (vy / len) * pull;
+  return { x, y, outX: vx / len, outY: vy / len };
+}
+
+function drawArrow(ctx: CanvasRenderingContext2D, x: number, y: number, outX: number, outY: number, color: string): void {
+  const sideX = -outY;
+  const sideY = outX;
+  ctx.beginPath();
+  ctx.fillStyle = color;
+  ctx.moveTo(x + outX * 9, y + outY * 9);
+  ctx.lineTo(x - outX * 6 + sideX * 6, y - outY * 6 + sideY * 6);
+  ctx.lineTo(x - outX * 6 - sideX * 6, y - outY * 6 - sideY * 6);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function haloLabel(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string): void {
+  ctx.save();
+  ctx.font = '700 13px "Noto Sans KR", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = 'rgba(8, 16, 24, 0.88)';
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.restore();
 }
 
 function drawGlyph(ctx: CanvasRenderingContext2D, icon: SkyIcon, x: number, y: number, radius: number, showName: boolean): void {
@@ -621,7 +716,9 @@ function planetColor(kind: string): string {
 }
 
 function glyphColor(kind: string): string {
-  if (kind === 'sun' || kind === 'sunrise' || kind === 'sunset' || kind === 'golden') return '#ffe28a';
+  if (kind === 'sun' || kind === 'sunrise' || kind === 'sunset') return SUN_MARK_COLOR;
+  if (kind === 'moon' || kind === 'moonrise' || kind === 'moonset') return MOON_MARK_COLOR;
+  if (kind === 'golden') return '#ffe28a';
   if (kind === 'blue' || kind === 'civil') return '#8ed4ff';
   if (kind === 'nautical' || kind === 'astronomical') return '#9eb0d6';
   if (kind === 'meteor') return '#ffb199';
@@ -643,4 +740,130 @@ function starPx(mag: number): number {
 
 function wrap(degrees: number): number {
   return (((degrees % 360) + 540) % 360) - 180;
+}
+
+/** AR 카메라 위에 하늘과 다섯 화각 사각형을 그립니다. */
+export function drawArSky(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  args: {
+    scene: SkyScene | null;
+    heading: number;
+    pitch: number;
+    hFov: number;
+    vFov: number;
+    sensorWidthMm: number;
+    sensorHeightMm: number;
+    aimBearing: number | null;
+    aimAlt: number;
+    skyline: SkylineColumn[] | null;
+    showVideo: boolean;
+  },
+): void {
+  if (!args.showVideo) {
+    ctx.fillStyle = skyFill(args.scene?.sun.altitude ?? -90);
+    ctx.fillRect(0, 0, width, height);
+  } else {
+    ctx.clearRect(0, 0, width, height);
+  }
+  if (!(args.hFov > 0) || !(args.vFov > 0) || width < 20 || height < 20) return;
+  const pxPerDegX = width / args.hFov;
+  const pxPerDegY = height / args.vFov;
+  const project = (azimuth: number, altitude: number) => {
+    const relAz = wrap(azimuth - args.heading);
+    const relAlt = altitude - args.pitch;
+    return { x: width / 2 + relAz * pxPerDegX, y: height / 2 - relAlt * pxPerDegY, relAz, relAlt };
+  };
+  if (args.scene) {
+    ctx.fillStyle = 'rgba(214, 220, 255, 0.55)';
+    let galaxyLabel: { x: number; y: number; dist: number } | null = null;
+    for (const sample of args.scene.galaxy) {
+      if (sample.lat !== 0) continue;
+      const point = project(sample.azimuth, sample.altitude);
+      if (Math.abs(point.relAz) > args.hFov / 2 || Math.abs(point.relAlt) > args.vFov / 2) continue;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      const dist = Math.hypot(point.relAz, point.relAlt);
+      if (!galaxyLabel || dist < galaxyLabel.dist) galaxyLabel = { x: point.x, y: point.y, dist };
+    }
+    if (galaxyLabel) haloLabel(ctx, '은하수', galaxyLabel.x, galaxyLabel.y - 10, '#d6dcff');
+    const arrows: { text: string; color: string; relAz: number; relAlt: number; priority: number }[] = [];
+    for (const icon of args.scene.icons) {
+      if (icon.kind === 'galaxy') continue;
+      const cue = skyBodyCue(
+        icon.name,
+        icon.azimuth,
+        icon.altitude,
+        args.heading,
+        args.pitch,
+        args.hFov,
+        args.vFov,
+        args.skyline,
+        args.aimBearing ?? args.heading,
+      );
+      const color = icon.kind === 'sun' ? SUN_MARK_COLOR : icon.kind === 'moon' ? MOON_MARK_COLOR : glyphColor(icon.kind);
+      if (cue.inside) {
+        const point = project(icon.azimuth, icon.altitude);
+        if (icon.kind === 'moon') {
+          paintMoon(ctx, point.x, point.y, Math.max(8, (icon.diameterDeg * pxPerDegY) / 2), icon.moonShapeDeg ?? 180, icon.limbRad ?? 0);
+        } else if (icon.kind === 'sun') {
+          ctx.beginPath();
+          ctx.fillStyle = SUN_MARK_COLOR;
+          ctx.arc(point.x, point.y, Math.max(8, (icon.diameterDeg * pxPerDegY) / 2), 0, Math.PI * 2);
+          ctx.fill();
+        } else if (icon.kind === 'star') {
+          spark(ctx, point.x, point.y, starPx(icon.mag ?? 1));
+        } else {
+          ctx.beginPath();
+          ctx.fillStyle = color;
+          ctx.arc(point.x, point.y, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        haloLabel(ctx, cue.text, point.x, point.y - 18, color);
+      } else {
+        arrows.push({ text: cue.text, color, relAz: cue.offsetDeg, relAlt: cue.relAlt, priority: arrowPriority(icon.kind) });
+      }
+    }
+    const kept = arrows.filter((item) => item.priority === 0);
+    const rest = arrows
+      .filter((item) => item.priority > 0)
+      .sort((a, b) => a.priority - b.priority || Math.hypot(a.relAz, a.relAlt) - Math.hypot(b.relAz, b.relAlt))
+      .slice(0, 8);
+    [...kept, ...rest].forEach((arrow, index) => {
+      const edge = edgePoint(arrow.relAz, arrow.relAlt, args.hFov, args.vFov, width, height, 28 + (index % 3) * 18, pxPerDegX, pxPerDegY);
+      drawArrow(ctx, edge.x, edge.y, edge.outX, edge.outY, arrow.color);
+      haloLabel(ctx, arrow.text, edge.x - edge.outX * 28, edge.y - edge.outY * 28, arrow.color);
+    });
+  }
+  if (args.aimBearing === null) return;
+  ctx.save();
+  ctx.strokeStyle = FOV_LINE_COLOR;
+  ctx.fillStyle = FOV_LINE_COLOR;
+  ctx.lineWidth = 1;
+  ctx.font = '12px "Noto Sans KR", sans-serif';
+  ctx.textAlign = 'left';
+  for (const mm of CAMERA_FOV_MM) {
+    const halfAz = fieldOfView(mm, args.sensorWidthMm) / 2;
+    const halfAlt = fieldOfView(mm, args.sensorHeightMm) / 2;
+    const left = project(args.aimBearing - halfAz, args.aimAlt);
+    const right = project(args.aimBearing + halfAz, args.aimAlt);
+    const top = project(args.aimBearing, args.aimAlt + halfAlt);
+    const bottom = project(args.aimBearing, args.aimAlt - halfAlt);
+    const x = Math.min(left.x, right.x);
+    const y = Math.min(top.y, bottom.y);
+    const frameW = Math.abs(right.x - left.x);
+    const frameH = Math.abs(bottom.y - top.y);
+    ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, frameW - 1), Math.max(1, frameH - 1));
+    if (x > -20 && y > 4 && x < width - 24 && y < height - 8) ctx.fillText(String(mm), x + 6, y + 14);
+  }
+  ctx.restore();
+}
+
+function arrowPriority(kind: string): number {
+  if (kind === 'sun' || kind === 'moon') return 0;
+  if (kind === 'mercury' || kind === 'venus' || kind === 'mars' || kind === 'jupiter' || kind === 'saturn' || kind === 'uranus') return 1;
+  if (kind === 'star') return 3;
+  return 2;
 }

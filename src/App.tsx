@@ -3,6 +3,7 @@ import { describeAdded, KNOWN_REFERENCES, weeklyPick, windowForScene } from './c
 import { activeScene, boxAround, rankPlaces, type RankedPlace } from './collect';
 import { loadFieldPrefs, writeFieldPrefs, type FieldPrefs } from './field-prefs';
 import { AiStatus } from './AiStatus';
+import { ArView } from './ArView';
 import { GuidePanel } from './GuidePanel';
 import { PublicNotes } from './PublicNotes';
 import { MyPlaces } from './MyPlaces';
@@ -24,7 +25,7 @@ import { useSession } from './session';
 import { SettingsScreen } from './SettingsScreen';
 import { ShootMap, type SelectionView } from './ShootMap';
 import { SightlineTool, type SightChoice } from './SightlineTool';
-import type { SightPlace, SkyRim } from './sightline';
+import type { SightOptics, SightPlace, SkyRim } from './sightline';
 import type { ShootPoint } from './shoot-points';
 import { parseReferenceAddress, referenceKey } from './sources';
 import {
@@ -37,7 +38,7 @@ import {
 } from './storage';
 import { useSyncedShootPoints } from './use-shoot-points';
 
-type Tab = 'map' | 'book' | 'mine' | 'settings';
+type Tab = 'map' | 'ar' | 'book' | 'mine' | 'settings';
 
 const START = { lat: 33.390542, lng: 126.556513 };
 
@@ -61,6 +62,7 @@ export function App() {
   const [road, setRoad] = useState<RoadOverlay>(emptyRoad);
   const [addressHit, setAddressHit] = useState<AddressHit | null>(null);
   const [skyRim, setSkyRim] = useState<SkyRim | null>(null);
+  const [optics, setOptics] = useState<SightOptics | null>(null);
   const [photographer, setPhotographer] = useState<SightPlace | null>(null);
   const [subjectPlace, setSubjectPlace] = useState<SightPlace | null>(null);
   const [placing, setPlacing] = useState<'photographer' | 'subject' | null>(null);
@@ -428,6 +430,7 @@ export function App() {
                 }}
                 rim={skyRim}
                 onAddress={setAddressHit}
+                sensor={optics?.sensor}
               />
             </div>
             <div className="field-list">
@@ -447,6 +450,7 @@ export function App() {
                 onPlacing={setPlacing}
                 onRidge={setRidge}
                 onRim={setSkyRim}
+                onOptics={setOptics}
               />
               <RoadTools center={center} address={addressHit} onChange={setRoad} />
               <AiStatus places={ranked} usingHere={useMyLocation} />
@@ -559,6 +563,13 @@ export function App() {
             </div>
           </div>
         )}
+        {tab === 'ar' && (
+          <ArView
+            place={photographer ?? { lat: center.lat, lng: center.lng }}
+            namedPlace={photographer !== null}
+            optics={optics}
+          />
+        )}
         {tab === 'book' && (
           <ReferenceBook
             pick={{ ...pick, scene: weeklyShown }}
@@ -595,6 +606,7 @@ export function App() {
 function Nav({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
   const items: { id: Tab; label: string }[] = [
     { id: 'map', label: '지도' },
+    { id: 'ar', label: 'AR' },
     { id: 'book', label: '참고' },
     { id: 'mine', label: '내 자리' },
     { id: 'settings', label: '설정' },
@@ -602,7 +614,7 @@ function Nav({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
   return (
     <>
       {items.map((item) => (
-        <button key={item.id} type="button" className={tab === item.id ? 'on' : ''} aria-pressed={tab === item.id} onClick={() => onTab(item.id)}>
+        <button key={item.id} type="button" className={tab === item.id ? 'on' : ''} data-tab={item.id} aria-pressed={tab === item.id} onClick={() => onTab(item.id)}>
           {item.label}
         </button>
       ))}

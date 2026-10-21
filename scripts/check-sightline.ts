@@ -18,9 +18,14 @@ import {
   CAMERA_SENSORS,
   SENSOR_HEIGHT_MM,
   SENSOR_WIDTH_MM,
+  CAMERA_FOV_MM,
+  FOV_LINE_COLOR,
+  MOON_MARK_COLOR,
+  SUN_MARK_COLOR,
   cameraSensor,
   formatSensorReadout,
   rimPoint,
+  skyBodyCue,
   viewFocalMm,
 } from '../src/sightline';
 import {
@@ -265,6 +270,15 @@ assert(Math.abs(fieldOfView(200, SENSOR_WIDTH_MM) - 2 * Math.atan(18 / 200) * (1
 assert(apsc.crop === 1.5 && Math.round(200 * apsc.crop) === 300, 'APS-C equivalent is 300mm');
 assert(formatSensorReadout(apsc, 200, apscH, apscV).includes('APS-C 1.5×') && formatSensorReadout(apsc, 200, apscH, apscV).includes('환산 300mm'), 'the readout names the crop');
 assert(CAMERA_SENSORS.length === 5, 'five sensor sizes');
+assert(SUN_MARK_COLOR !== MOON_MARK_COLOR && FOV_LINE_COLOR !== SUN_MARK_COLOR && FOV_LINE_COLOR !== MOON_MARK_COLOR, 'fov lines are not sun or moon colored');
+assert(CAMERA_FOV_MM.includes(24) && CAMERA_FOV_MM.includes(600), 'the fixed wedges include 24mm and 600mm');
+const insideMoon = skyBodyCue('달', 111.71, 8.29, 112, 7.3, 10.286, 6.867, [{ offsetDeg: 0, altitude: 7.42 }]);
+assert(insideMoon.inside && insideMoon.text === '달', 'a moon inside the tele frame keeps its name');
+const hiddenMoon = skyBodyCue('달', 112, 6, 112, 7.3, 10.286, 6.867, [{ offsetDeg: 0, altitude: 7.42 }]);
+assert(hiddenMoon.inside && hiddenMoon.text === '달 능선에 가림', 'a ridge above the moon is named');
+const outsideSun = skyBodyCue('해', 238.74, 22.85, 112, 7.3, 10.286, 6.867, null);
+assert(!outsideSun.inside && outsideSun.text.includes('해') && outsideSun.text.includes('오른쪽') && outsideSun.text.includes('위'), 'a sun outside names the direction');
+assert(fieldOfView(24, 36) > fieldOfView(600, 36) * 10, '24mm wedge is much wider than 600mm');
 assert(Math.abs(fieldOfView(viewFocalMm([]), apsc.widthMm) - fieldOfView(24, apsc.widthMm)) < 1e-9, 'all-off still uses 24mm on the chosen sensor');
 
 if (failed) {

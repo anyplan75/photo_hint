@@ -13,9 +13,11 @@ import {
   azimuthOffset,
   personShape,
   sightSamples,
+  skyBodyCue,
   skylineProbes,
   viewFocalMm,
   type SensorId,
+  type SightOptics,
   type SightPlace,
   type SkylineColumn,
   type SkylineProbe,
@@ -45,6 +47,7 @@ export function SightlineTool({
   onPlacing,
   onRidge,
   onRim,
+  onOptics,
 }: {
   photographer: SightPlace | null;
   subject: SightPlace | null;
@@ -55,6 +58,7 @@ export function SightlineTool({
   onPlacing: (role: 'photographer' | 'subject' | null) => void;
   onRidge: (place: SightPlace | null) => void;
   onRim?: (rim: SkyRim | null) => void;
+  onOptics?: (optics: SightOptics) => void;
 }) {
   const [kind, setKind] = useState<'person' | 'object'>('person');
   const [heightText, setHeightText] = useState('1.7');
@@ -81,6 +85,8 @@ export function SightlineTool({
   onRidgeRef.current = onRidge;
   const onRimRef = useRef(onRim);
   onRimRef.current = onRim;
+  const onOpticsRef = useRef(onOptics);
+  onOpticsRef.current = onOptics;
 
   const heightM = positive(heightText, 1.7);
   const widthM = positive(widthText, 1);
@@ -279,6 +285,26 @@ export function SightlineTool({
     return () => observer.disconnect();
   }, [hFov, vFov, profile, frameSubject, scene, sightAlt, skyline, frames, sensor.widthMm, sensor.heightMm]);
 
+  const sunCue = scene && profile ? skyBodyCue('해', scene.sun.azimuth, scene.sun.altitude, profile.bearing, sightAlt, hFov, vFov, skyline) : null;
+  const moonCue = scene && profile ? skyBodyCue('달', scene.moon.azimuth, scene.moon.altitude, profile.bearing, sightAlt, hFov, vFov, skyline) : null;
+  const opticsKey = [
+    sensor.id,
+    [...frames].sort((a, b) => a - b).join(','),
+    profile?.bearing.toFixed(2) ?? '',
+    sightAlt.toFixed(2),
+    (profile?.cameraAbs ?? 0).toFixed(1),
+    skyline.map((column) => `${column.offsetDeg.toFixed(2)}:${column.altitude === null ? '' : column.altitude.toFixed(2)}`).join('|'),
+  ].join('~');
+  useEffect(() => {
+    onOpticsRef.current?.({
+      sensor,
+      frames: [...frames],
+      bearing: profile?.bearing ?? null,
+      sightAlt,
+      elevationM: profile?.cameraAbs === null || profile?.cameraAbs === undefined ? 0 : Math.max(0, profile.cameraAbs - cameraM),
+      skyline,
+    });
+  }, [opticsKey]);
   const sunPhrase = scene && profile ? framePhrase(azimuthOffset(profile.bearing, scene.sun.azimuth), scene.sun.altitude, sightAlt, hFov, vFov) : '';
   const moonPhrase = scene && profile ? framePhrase(azimuthOffset(profile.bearing, scene.moon.azimuth), scene.moon.altitude, sightAlt, hFov, vFov) : '';
   const active = scene?.icons.filter((icon) => icon.active && icon.kind !== 'sun' && icon.kind !== 'moon' && icon.kind !== 'star').map((icon) => icon.name) ?? [];
@@ -328,6 +354,10 @@ export function SightlineTool({
       data-crop={sensor.crop.toFixed(1)}
       data-equivalent-mm={Number.isInteger(equivalentMm) ? equivalentMm : equivalentMm.toFixed(1)}
       data-sensor-readout={readout}
+      data-sun-cue={sunCue?.text ?? ''}
+      data-moon-cue={moonCue?.text ?? ''}
+      data-sun-in={sunCue ? (sunCue.inside ? 'yes' : 'no') : ''}
+      data-moon-in={moonCue ? (moonCue.inside ? 'yes' : 'no') : ''}
       data-frames={[...frames].sort((a, b) => a - b).join(',')}
       data-skyline={skylineState}
       data-ground-alt={feetAlt === null ? '' : feetAlt.toFixed(2)}

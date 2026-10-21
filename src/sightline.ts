@@ -39,6 +39,15 @@ export function formatSensorReadout(sensor: CameraSensor, viewMm: number, hFov: 
   return `${sensor.name} ${sensor.crop.toFixed(1)}× · ${viewMm}mm · 환산 ${eq}mm · 가로 ${hFov.toFixed(2)}° · 세로 ${vFov.toFixed(2)}°`;
 }
 
+/** 해 표시·지도 선·테두리 아이콘이 같이 쓰는 색입니다. */
+export const SUN_MARK_COLOR = '#f0c14a';
+/** 달 표시·지도 선·테두리 아이콘이 같이 쓰는 색입니다. 해 색과 다릅니다. */
+export const MOON_MARK_COLOR = '#8eb4ff';
+/** 화각선입니다. 해·달 색을 쓰지 않습니다. */
+export const FOV_LINE_COLOR = '#f4f7ef';
+/** 지도와 AR에 항상 그리는 초점거리입니다. */
+export const CAMERA_FOV_MM = [24, 50, 200, 400, 600] as const;
+
 /** 켠 초점거리 중 가장 넓은 화각입니다. 없으면 24mm입니다. */
 export function viewFocalMm(enabled: readonly number[]): number {
   const usable = enabled.filter((mm) => Number.isFinite(mm) && mm > 0);
@@ -201,6 +210,60 @@ export function framePhrase(
   return `${parts.join(' · ')} 밖`;
 }
 
+export interface BodyCue {
+  inside: boolean;
+  blocked: boolean;
+  text: string;
+  offsetDeg: number;
+  relAlt: number;
+}
+
+/** 프레임 안이면 이름, 능선에 가리면 그 말을 붙이고, 밖이면 방향과 각도를 적습니다. */
+export function skyBodyCue(
+  name: string,
+  azimuth: number,
+  altitude: number,
+  bearing: number,
+  centerAlt: number,
+  hFov: number,
+  vFov: number,
+  skyline: readonly { offsetDeg: number; altitude: number | null }[] | null,
+  ridgeBearing = bearing,
+): BodyCue {
+  const offsetDeg = azimuthOffset(bearing, azimuth);
+  const relAlt = altitude - centerAlt;
+  const inside = inLensFrame(offsetDeg, altitude, centerAlt, hFov, vFov);
+  const blocked = ridgeHides(azimuthOffset(ridgeBearing, azimuth), altitude, skyline);
+  const where = inside ? name : offFrameText(name, offsetDeg, relAlt, hFov, vFov);
+  return { inside, blocked, text: blocked ? `${where} 능선에 가림` : where, offsetDeg, relAlt };
+}
+
+function ridgeHides(
+  offsetDeg: number,
+  altitude: number,
+  skyline: readonly { offsetDeg: number; altitude: number | null }[] | null,
+): boolean {
+  if (!skyline || skyline.length === 0) return false;
+  let best: { offsetDeg: number; altitude: number | null } | null = null;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const column of skyline) {
+    const dist = Math.abs(column.offsetDeg - offsetDeg);
+    if (dist < bestDist) {
+      best = column;
+      bestDist = dist;
+    }
+  }
+  if (!best || best.altitude === null || bestDist > 1.5) return false;
+  return altitude < best.altitude;
+}
+
+function offFrameText(name: string, offsetDeg: number, relAlt: number, hFov: number, vFov: number): string {
+  const parts: string[] = [];
+  if (Math.abs(offsetDeg) > hFov / 2) parts.push(`${offsetDeg >= 0 ? '오른쪽' : '왼쪽'} ${Math.abs(offsetDeg).toFixed(0)}°`);
+  if (Math.abs(relAlt) > vFov / 2) parts.push(`${relAlt >= 0 ? '위' : '아래'} ${Math.abs(relAlt).toFixed(0)}°`);
+  return parts.length === 0 ? name : `${name} ${parts.join(' · ')}`;
+}
+
 export function personShape(heightM: number): PersonShape {
   const head = heightM / 8;
   const headWidth = head * 0.72;
@@ -324,6 +387,16 @@ export interface SkylineColumn {
   groundAlt: number | null;
   /** 대상보다 앞에서 머리보다 높은 능선. 없으면 null입니다. */
   occludeAlt: number | null;
+}
+
+/** 지도 화각선과 AR이 시선 도구와 나눠 쓰는 화면 설정입니다. */
+export interface SightOptics {
+  sensor: CameraSensor;
+  frames: number[];
+  bearing: number | null;
+  sightAlt: number;
+  elevationM: number;
+  skyline: SkylineColumn[];
 }
 
 /** 24mm 화면을 가로지르는 고도 표본입니다. 작가 위치는 거리 0입니다. */

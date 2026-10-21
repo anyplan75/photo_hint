@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { rimPoint, type SkyRim } from './sightline';
+import {
+  CAMERA_FOV_MM,
+  CAMERA_SENSORS,
+  FOV_LINE_COLOR,
+  MOON_MARK_COLOR,
+  SUN_MARK_COLOR,
+  fieldOfView,
+  pointFromBearing,
+  rimPoint,
+  type CameraSensor,
+  type SkyRim,
+} from './sightline';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { shootingGuide, type GuideBlock } from './guide';
@@ -8,6 +19,7 @@ import { forwardAddress, type AddressHit, type RoadOverlay } from './map-tools';
 import { reverseAddress } from './search';
 import type { WindowKind } from './places';
 import { recommendTime, sunPlan } from './recommend';
+import { bearingDegrees } from './geo';
 import { cardinal, type RankedSpot, type SceneChoice } from './region-places';
 import type { ShootPoint } from './shoot-points';
 import { useSyncedShootPoints, type SyncMode } from './use-shoot-points';
@@ -34,6 +46,10 @@ const SNAP_SOURCE = 'geuttae-snap-link';
 const SNAP_LAYER = 'geuttae-snap-link';
 const SIGHT_SOURCE = 'geuttae-sight';
 const SIGHT_LAYER = 'geuttae-sight-line';
+const SUN_RAY_SOURCE = 'geuttae-sun-ray';
+const SUN_RAY_LAYER = 'geuttae-sun-ray';
+const MOON_RAY_SOURCE = 'geuttae-moon-ray';
+const MOON_RAY_LAYER = 'geuttae-moon-ray';
 
 export function ShootMap({
   region,
@@ -60,6 +76,7 @@ export function ShootMap({
   onPlaceSight,
   rim = null,
   onAddress,
+  sensor = CAMERA_SENSORS[0],
 }: {
   region: string;
   center: { lat: number; lng: number } | null;
@@ -104,6 +121,8 @@ export function ShootMap({
   rim?: SkyRim | null;
   /** 지도 왼쪽 위 주소 검색이 고른 위치입니다. */
   onAddress?: (hit: AddressHit) => void;
+  /** 화각 부채꼴에 쓰는 센서입니다. */
+  sensor?: CameraSensor;
 }) {
   const token = mapboxPublicToken();
   const canvas = useRef<HTMLDivElement>(null);
@@ -127,6 +146,11 @@ export function ShootMap({
   onPlaceSightRef.current = onPlaceSight;
   const onAddressRef = useRef(onAddress);
   onAddressRef.current = onAddress;
+  const rimRef = useRef(rim);
+  rimRef.current = rim;
+  const sensorRef = useRef(sensor);
+  sensorRef.current = sensor;
+  const rayMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const placingRef = useRef(sight?.placing ?? null);
   placingRef.current = sight?.placing ?? null;
   const sightMarkersRef = useRef<mapboxgl.Marker[]>([]);
@@ -435,6 +459,68 @@ export function ShootMap({
     };
   }, [token, sightKey]);
 
+  const rayKey = `${sight?.photographer?.lat ?? ''},${sight?.photographer?.lng ?? ''}|${sight?.subject?.lat ?? ''},${sight?.subject?.lng ?? ''}|${rim?.sun.azimuth ?? ''},${rim?.moon.azimuth ?? ''}|${sensor.id}`;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !token) return;
+    const drawRays = () => {
+      if (!map.isStyleLoaded()) return;
+      rayMarkersRef.current.forEach((marker) => marker.remove());
+      rayMarkersRef.current = [];
+      const overlay = sightRef.current;
+      const origin = overlay?.photographer;
+      const subject = overlay?.subject;
+      const sky = rimRef.current;
+      if (!origin || !sky) {
+        setLine(map, SUN_RAY_SOURCE, SUN_RAY_LAYER, null, false, SUN_MARK_COLOR, 4);
+        setLine(map, MOON_RAY_SOURCE, MOON_RAY_LAYER, null, false, MOON_MARK_COLOR, 4);
+      } else {
+        const sunEnd = rayEnd(map, origin, sky.sun.azimuth);
+        const moonEnd = rayEnd(map, origin, sky.moon.azimuth);
+        setLine(map, SUN_RAY_SOURCE, SUN_RAY_LAYER, [[origin.lng, origin.lat], [sunEnd.lng, sunEnd.lat]], false, SUN_MARK_COLOR, 4);
+        setLine(map, MOON_RAY_SOURCE, MOON_RAY_LAYER, [[origin.lng, origin.lat], [moonEnd.lng, moonEnd.lat]], false, MOON_MARK_COLOR, 4);
+        rayMarkersRef.current.push(rayTag(map, sunEnd.lat, sunEnd.lng, '해', SUN_MARK_COLOR, { sunRay: 'true' }));
+        rayMarkersRef.current.push(rayTag(map, moonEnd.lat, moonEnd.lng, '달', MOON_MARK_COLOR, { moonRay: 'true' }));
+      }
+      if (!origin || !subject) {
+        for (const mm of CAMERA_FOV_MM) setLine(map, fovSource(mm), fovLayer(mm), null, false, FOV_LINE_COLOR, 1.25);
+        return;
+      }
+      const bearing = bearingDegrees(origin.lat, origin.lng, subject.lat, subject.lng);
+      const reach = edgeMeters(map, origin, bearing);
+      const chosen = sensorRef.current;
+      CAMERA_FOV_MM.forEach((mm, index) => {
+        const half = fieldOfView(mm, chosen.widthMm) / 2;
+        const left = rayEnd(map, origin, bearing - half);
+        const right = rayEnd(map, origin, bearing + half);
+        setLine(
+          map,
+          fovSource(mm),
+          fovLayer(mm),
+          [
+            [left.lng, left.lat],
+            [origin.lng, origin.lat],
+            [right.lng, right.lat],
+          ],
+          false,
+          FOV_LINE_COLOR,
+          1.25,
+        );
+        const labelAt = pointFromBearing(origin.lat, origin.lng, bearing, reach * (0.22 + index * 0.14));
+        rayMarkersRef.current.push(rayTag(map, labelAt.lat, labelAt.lng, String(mm), FOV_LINE_COLOR, { fovMm: String(mm) }));
+      });
+    };
+    if (map.isStyleLoaded()) drawRays();
+    else map.once('load', drawRays);
+    map.on('moveend', drawRays);
+    return () => {
+      map.off('load', drawRays);
+      map.off('moveend', drawRays);
+      rayMarkersRef.current.forEach((marker) => marker.remove());
+      rayMarkersRef.current = [];
+    };
+  }, [token, rayKey]);
+
   async function savePoint(event: FormEvent) {
     event.preventDefault();
     const trimmed = name.trim();
@@ -511,6 +597,10 @@ export function ShootMap({
       data-sight-line={sight?.photographer && sight?.subject ? 'on' : 'off'}
       data-saved-count={points.length}
       data-point-draft={draft ? 'open' : 'closed'}
+      data-sun-color={SUN_MARK_COLOR}
+      data-moon-color={MOON_MARK_COLOR}
+      data-fov-color={FOV_LINE_COLOR}
+      data-fov={CAMERA_FOV_MM.join(',')}
     >
       <h2 id="map-title" className="sr">
         지도
@@ -773,6 +863,7 @@ function setLine(
   coordinates: [number, number][] | null,
   dashed: boolean,
   color?: string,
+  width?: number,
 ): void {
   const data =
     coordinates && coordinates.length > 1
@@ -781,9 +872,10 @@ function setLine(
   const source = map.getSource(sourceId);
   if (!source) map.addSource(sourceId, { type: 'geojson', data });
   else (source as mapboxgl.GeoJSONSource).setData(data);
+  const lineWidth = width ?? (dashed ? 3 : 6);
   const paint = dashed
-    ? { 'line-color': color ?? '#ffb199', 'line-width': 3, 'line-dasharray': [2, 2] }
-    : { 'line-color': color ?? '#d6f25c', 'line-width': 6 };
+    ? { 'line-color': color ?? '#ffb199', 'line-width': lineWidth, 'line-dasharray': [2, 2] }
+    : { 'line-color': color ?? '#d6f25c', 'line-width': lineWidth };
   if (!map.getLayer(layerId)) {
     map.addLayer({
       id: layerId,
@@ -796,6 +888,56 @@ function setLine(
     return;
   }
   map.setPaintProperty(layerId, 'line-color', paint['line-color']);
+  map.setPaintProperty(layerId, 'line-width', lineWidth);
+}
+
+function fovSource(mm: number): string {
+  return `geuttae-fov-${mm}`;
+}
+
+function fovLayer(mm: number): string {
+  return `geuttae-fov-${mm}`;
+}
+
+function edgeMeters(map: mapboxgl.Map, origin: { lat: number; lng: number }, azimuth: number): number {
+  const bounds = map.getBounds();
+  if (!bounds) return 8000;
+  let high = 400;
+  let guard = 0;
+  while (guard < 24 && high < 180000) {
+    const point = pointFromBearing(origin.lat, origin.lng, azimuth, high);
+    if (!bounds.contains([point.lng, point.lat])) break;
+    high *= 1.7;
+    guard += 1;
+  }
+  let low = high / 1.7;
+  for (let step = 0; step < 14; step += 1) {
+    const mid = (low + high) / 2;
+    const point = pointFromBearing(origin.lat, origin.lng, azimuth, mid);
+    if (bounds.contains([point.lng, point.lat])) low = mid;
+    else high = mid;
+  }
+  return Math.max(1200, high);
+}
+
+function rayEnd(map: mapboxgl.Map, origin: { lat: number; lng: number }, azimuth: number): { lat: number; lng: number } {
+  return pointFromBearing(origin.lat, origin.lng, azimuth, edgeMeters(map, origin, azimuth));
+}
+
+function rayTag(
+  map: mapboxgl.Map,
+  lat: number,
+  lng: number,
+  text: string,
+  color: string,
+  data: Record<string, string>,
+): mapboxgl.Marker {
+  const element = document.createElement('span');
+  element.className = 'ray-tag';
+  element.textContent = text;
+  element.style.color = color;
+  for (const [key, value] of Object.entries(data)) element.dataset[key] = value;
+  return new mapboxgl.Marker({ element, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
 }
 
 function draftMarker(map: mapboxgl.Map, lat: number, lng: number): mapboxgl.Marker {
@@ -988,7 +1130,7 @@ function MapRim({ rim, bearing, width, height }: { rim: SkyRim; bearing: number;
             data-set={set ? 'yes' : 'no'}
             style={{ left: item.point.x, top: item.point.y }}
           >
-            <i className={item.kind === 'sun' ? 'rim-sun' : 'rim-moon'} />
+            <i className={item.kind === 'sun' ? 'rim-sun' : 'rim-moon'} style={{ background: item.kind === 'sun' ? SUN_MARK_COLOR : MOON_MARK_COLOR }} />
             {item.name}
             {set ? ' 짐' : ''}
           </span>
