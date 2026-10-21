@@ -1,4 +1,12 @@
-import { angularDiameterDegrees, type PersonShape, type SightProfile } from './sightline';
+import {
+  angularDiameterDegrees,
+  fieldOfView,
+  SENSOR_HEIGHT_MM,
+  SENSOR_WIDTH_MM,
+  type PersonShape,
+  type SightProfile,
+  type SkylineColumn,
+} from './sightline';
 import { moonLit, type GalaxySample, type SkyIcon, type SkyScene } from './sky-scene';
 
 export interface FrameMetrics {
@@ -15,6 +23,8 @@ export interface FrameSubject {
   distanceM: number;
   shape: PersonShape | null;
   hidden: boolean;
+  /** 발이 닿는 지면의 고도각. 지면을 못 읽으면 null입니다. */
+  feetAlt: number | null;
 }
 
 /** 렌즈 프레임입니다. 한 각크기 비율로 대상·해·달을 놓습니다. */
@@ -28,6 +38,8 @@ export function drawLensFrame(
   bearing: number,
   subject: FrameSubject | null,
   scene: SkyScene | null,
+  skyline: SkylineColumn[] | null,
+  focals: number[],
 ): FrameMetrics {
   const pxPerDeg = hFov > 0 && vFov > 0 ? Math.min(width / hFov, height / vFov) : 1;
   const frameW = hFov * pxPerDeg;
@@ -64,13 +76,18 @@ export function drawLensFrame(
     if (scene.sun) drawDisc(ctx, scene.sun, bearing, centerAlt, pxPerDeg, width, height);
     if (scene.moon) drawDisc(ctx, scene.moon, bearing, centerAlt, pxPerDeg, width, height);
   }
+  if (skyline && skyline.length > 1) drawSkyline(ctx, width, height, centerAlt, pxPerDeg, skyline, false);
   let subjectPx = 0;
   if (subject && subject.heightDeg > 0) {
     subjectPx = subject.heightDeg * pxPerDeg;
-    drawSubject(ctx, width / 2, height / 2, pxPerDeg, subject);
+    const bodyCenterAlt = subject.feetAlt === null ? centerAlt : subject.feetAlt + subject.heightDeg / 2;
+    const cy = height / 2 - (bodyCenterAlt - centerAlt) * pxPerDeg;
+    drawSubject(ctx, width / 2, cy, pxPerDeg, subject);
   }
+  if (skyline && skyline.length > 1) drawSkyline(ctx, width, height, centerAlt, pxPerDeg, skyline, true);
   ctx.restore();
   drawBrackets(ctx, width, height);
+  drawFocalFrames(ctx, width, height, hFov, vFov, focals);
   ctx.restore();
   const moonPx = (scene?.moon.diameterDeg ?? 0) * pxPerDeg;
   const sunPx = (scene?.sun.diameterDeg ?? 0) * pxPerDeg;
@@ -173,6 +190,136 @@ export function drawProfile(ctx: CanvasRenderingContext2D, width: number, height
   }
   ctx.fillStyle = '#9eb5bd';
   ctx.fillText(`${Math.round(max)}m`, 8, pad + 10);
+}
+
+function drawSkyline(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  centerAlt: number,
+  pxPerDeg: number,
+  columns: SkylineColumn[],
+  occluder: boolean,
+): void {
+  const yOf = (altitude: number) => height / 2 - (altitude - centerAlt) * pxPerDeg;
+  const xOf = (offset: number) => width / 2 + offset * pxPerDeg;
+  if (!occluder) {
+    fillHorizon(ctx, height, columns, (column) => column.altitude, xOf, yOf, 'rgba(28, 52, 34, 0.94)');
+    strokeHorizon(ctx, columns, (column) => column.altitude, xOf, yOf, '#f3f6ea', 1.6);
+    strokeHorizon(ctx, columns, (column) => column.groundAlt, xOf, yOf, '#d6f25c', 1.2);
+    return;
+  }
+  fillHorizon(ctx, height, columns, (column) => column.occludeAlt, xOf, yOf, 'rgba(16, 28, 20, 0.96)');
+  strokeHorizon(ctx, columns, (column) => column.occludeAlt, xOf, yOf, '#ffb199', 1.4);
+}
+
+function fillHorizon(
+  ctx: CanvasRenderingContext2D,
+  height: number,
+  columns: SkylineColumn[],
+  pick: (column: SkylineColumn) => number | null,
+  xOf: (offset: number) => number,
+  yOf: (altitude: number) => number,
+  color: string,
+): void {
+  let run: SkylineColumn[] = [];
+  const flush = () => {
+    const known = run.filter((column) => pick(column) !== null);
+    if (known.length < 2) {
+      run = [];
+      return;
+    }
+    ctx.beginPath();
+    known.forEach((column, index) => {
+      const x = xOf(column.offsetDeg);
+      const y = yOf(pick(column) as number);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.lineTo(xOf(known[known.length - 1].offsetDeg), height);
+    ctx.lineTo(xOf(known[0].offsetDeg), height);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    run = [];
+  };
+  for (const column of columns) {
+    if (pick(column) === null) flush();
+    else run.push(column);
+  }
+  flush();
+}
+
+function strokeHorizon(
+  ctx: CanvasRenderingContext2D,
+  columns: SkylineColumn[],
+  pick: (column: SkylineColumn) => number | null,
+  xOf: (offset: number) => number,
+  yOf: (altitude: number) => number,
+  color: string,
+  width: number,
+): void {
+  let drawing = false;
+  ctx.beginPath();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  for (const column of columns) {
+    const altitude = pick(column);
+    if (altitude === null) {
+      drawing = false;
+      continue;
+    }
+    const x = xOf(column.offsetDeg);
+    const y = yOf(altitude);
+    if (!drawing) {
+      ctx.moveTo(x, y);
+      drawing = true;
+    } else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function drawFocalFrames(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  hFov: number,
+  vFov: number,
+  focals: number[],
+): void {
+  if (!(hFov > 0) || !(vFov > 0)) return;
+  const list = [...focals].sort((a, b) => fieldOfView(b, SENSOR_WIDTH_MM) - fieldOfView(a, SENSOR_WIDTH_MM));
+  ctx.save();
+  ctx.font = '11px "Noto Sans KR", sans-serif';
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(244, 247, 239, 0.92)';
+  ctx.fillStyle = '#f4f7ef';
+  for (const mm of list) {
+    const frameW = (fieldOfView(mm, SENSOR_WIDTH_MM) / hFov) * width;
+    const frameH = (fieldOfView(mm, SENSOR_HEIGHT_MM) / vFov) * height;
+    const x = (width - frameW) / 2;
+    const y = (height - frameH) / 2;
+    ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, frameW - 1), Math.max(1, frameH - 1));
+    const text = `${mm}`;
+    if (frameW > 48 && frameH > 18) {
+      ctx.textAlign = 'left';
+      haloText(ctx, text, x + 6, y + 14);
+    } else {
+      ctx.textAlign = 'left';
+      haloText(ctx, text, x + frameW + 4, y + frameH / 2 + 4);
+    }
+  }
+  ctx.restore();
+}
+
+function haloText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number): void {
+  ctx.save();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(8, 16, 24, 0.8)';
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = '#f4f7ef';
+  ctx.fillText(text, x, y);
+  ctx.restore();
 }
 
 function drawSubject(ctx: CanvasRenderingContext2D, cx: number, cy: number, pxPerDeg: number, subject: FrameSubject): void {

@@ -1020,6 +1020,7 @@ button:focus-visible, input:focus-visible {
 .sight-strip { height: 64px; }
 .sight-profile { height: 96px; }
 .sight-row .field-btn[aria-pressed='true'] { background: var(--gold); color: var(--gold-ink); }
+.sight-focal .field-btn { min-height: 32px; padding: 0 8px; font-size: 0.78rem; }
 
 .road-tools {
   display: flex;

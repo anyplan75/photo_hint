@@ -1,20 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  LENS_PRESETS,
+  FRAME_FOCALS,
   SENSOR_HEIGHT_MM,
   SENSOR_WIDTH_MM,
+  VIEW_FOCAL_MM,
   analyzeProfile,
   angularDiameterDegrees,
+  apparentAltitudeDegrees,
+  assembleSkyline,
   fieldOfView,
   framePhrase,
   azimuthOffset,
   personShape,
   sightSamples,
+  skylineProbes,
   type SightPlace,
+  type SkylineColumn,
+  type SkylineProbe,
 } from './sightline';
 import { drawLensFrame, drawProfile, drawSkyStrip, type FrameSubject } from './sight-draw';
 import { skyBodies, skyMarks, type SkyScene } from './sky-scene';
-import { readTerrain } from './terrain-dem';
+import { readTerrain, readTerrainLoose } from './terrain-dem';
+import { bearingDegrees, distanceMeters } from './geo';
 import { dateFromSeoul, formatSeoulClock, seoulDateString, seoulMinutes } from './time';
 
 export interface SightChoice {
@@ -48,13 +55,17 @@ export function SightlineTool({
   const [heightText, setHeightText] = useState('1.7');
   const [widthText, setWidthText] = useState('1');
   const [cameraText, setCameraText] = useState('1.5');
-  const [focal, setFocal] = useState(50);
+  const [frames, setFrames] = useState<number[]>([24, 50, 200]);
   const [dateStr, setDateStr] = useState(() => seoulDateString(new Date()));
   const [minutes, setMinutes] = useState(() => seoulMinutes(new Date()));
   const [playing, setPlaying] = useState(false);
   const [elevations, setElevations] = useState<Array<number | null> | null>(null);
   const [terrainNote, setTerrainNote] = useState<string | null>(null);
   const [terrainState, setTerrainState] = useState<'idle' | 'loading' | 'ok' | 'fail'>('idle');
+  const [probes, setProbes] = useState<SkylineProbe[]>([]);
+  const [probeElevations, setProbeElevations] = useState<Array<number | null> | null>(null);
+  const [skylineNote, setSkylineNote] = useState<string | null>(null);
+  const [skylineState, setSkylineState] = useState<'idle' | 'loading' | 'ok' | 'gap' | 'none'>('idle');
   const [metrics, setMetrics] = useState({ subjectPx: 0, moonPx: 0, sunPx: 0, pxPerDeg: 0 });
   const frameBox = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLCanvasElement>(null);
@@ -115,6 +126,36 @@ export function SightlineTool({
     return () => controller.abort();
   }, [photographer, subject]);
 
+  const hFov = fieldOfView(VIEW_FOCAL_MM, SENSOR_WIDTH_MM);
+  const vFov = fieldOfView(VIEW_FOCAL_MM, SENSOR_HEIGHT_MM);
+  const probeKey = photographer && subject ? `${photographer.lat.toFixed(5)},${photographer.lng.toFixed(5)},${subject.lat.toFixed(5)},${subject.lng.toFixed(5)}` : '';
+  useEffect(() => {
+    if (!photographer || !subject) {
+      setProbes([]);
+      setProbeElevations(null);
+      setSkylineNote(null);
+      setSkylineState('idle');
+      return;
+    }
+    const bearing = bearingDegrees(photographer.lat, photographer.lng, subject.lat, subject.lng);
+    const distance = distanceMeters(photographer.lat, photographer.lng, subject.lat, subject.lng);
+    const nextProbes = skylineProbes(photographer, bearing, hFov, distance);
+    const controller = new AbortController();
+    setProbes(nextProbes);
+    setProbeElevations(null);
+    setSkylineState('loading');
+    setSkylineNote('화면 능선을 읽는 중');
+    void readTerrainLoose(nextProbes, controller.signal).then((read) => {
+      if (controller.signal.aborted) return;
+      setProbeElevations(read.elevations);
+      setSkylineNote(read.note);
+      const known = read.elevations.some((item) => item !== null);
+      const missing = read.elevations.some((item) => item === null);
+      setSkylineState(!known ? 'none' : missing ? 'gap' : 'ok');
+    });
+    return () => controller.abort();
+  }, [probeKey, hFov, photographer, subject]);
+
   const ridgeKey = profile?.ridge ? `${profile.ridge.lat.toFixed(5)},${profile.ridge.lng.toFixed(5)}` : '';
   useEffect(() => {
     const ridge = profile?.ridge;
@@ -132,13 +173,33 @@ export function SightlineTool({
     [when, photographer, elevation, marks],
   );
 
-  const hFov = fieldOfView(focal, SENSOR_WIDTH_MM);
-  const vFov = fieldOfView(focal, SENSOR_HEIGHT_MM);
   const subjectSize = kind === 'person' ? heightM : heightM;
   const subjectWidth = kind === 'person' ? shape.shoulderM : widthM;
   const distanceM = profile?.slantM ?? 0;
   const heightDeg = angularDiameterDegrees(subjectSize, distanceM);
   const widthDeg = angularDiameterDegrees(subjectWidth, distanceM);
+  const skyline: SkylineColumn[] = useMemo(() => {
+    if (!probeElevations || probes.length === 0 || !profile) return [];
+    const looseCamera = probes[0]?.distanceM === 0 ? probeElevations[0] : null;
+    const cameraAbs = profile.cameraAbs ?? (looseCamera === null ? null : looseCamera + cameraM);
+    return assembleSkyline({
+      probes,
+      elevations: probeElevations,
+      profileSamples: profile.samples,
+      profileElevations: profile.cameraAbs === null ? null : profile.elevations,
+      cameraAbs,
+      subjectDistanceM: profile.groundM,
+      subjectHeightDeg: heightDeg,
+    });
+  }, [probeElevations, probes, profile, cameraM, heightDeg]);
+  const centerColumn = skyline.find((column) => Math.abs(column.offsetDeg) < 0.001) ?? null;
+  const feetAlt = centerColumn?.groundAlt ?? null;
+  const sightAlt =
+    profile && profile.cameraAbs !== null && profile.subjectGround !== null
+      ? apparentAltitudeDegrees(profile.groundM, profile.subjectGround + heightM / 2, profile.cameraAbs)
+      : feetAlt === null
+        ? (profile?.aimAlt ?? 0)
+        : feetAlt + heightDeg / 2;
   const frameSubject: FrameSubject | null =
     profile && distanceM > 0
       ? {
@@ -148,6 +209,7 @@ export function SightlineTool({
           distanceM,
           shape: kind === 'person' ? shape : null,
           hidden: profile.blocked === true,
+          feetAlt,
         }
       : null;
 
@@ -163,7 +225,7 @@ export function SightlineTool({
       const cssHeight = box.clientHeight;
       if (cssWidth > 20 && cssHeight > 20) {
         paint(frame, cssWidth, cssHeight, ratio, (ctx) => {
-          const next = drawLensFrame(ctx, cssWidth, cssHeight, hFov, vFov, profile?.aimAlt ?? 0, profile?.bearing ?? 0, frameSubject, scene);
+          const next = drawLensFrame(ctx, cssWidth, cssHeight, hFov, vFov, sightAlt, profile?.bearing ?? 0, frameSubject, scene, skyline, frames);
           setMetrics((current) =>
             current.subjectPx === next.subjectPx && current.moonPx === next.moonPx && current.pxPerDeg === next.pxPerDeg ? current : next,
           );
@@ -179,10 +241,10 @@ export function SightlineTool({
     const observer = new ResizeObserver(draw);
     observer.observe(box);
     return () => observer.disconnect();
-  }, [hFov, vFov, profile, frameSubject, scene]);
+  }, [hFov, vFov, profile, frameSubject, scene, sightAlt, skyline, frames]);
 
-  const sunPhrase = scene && profile ? framePhrase(azimuthOffset(profile.bearing, scene.sun.azimuth), scene.sun.altitude, profile.aimAlt, hFov, vFov) : '';
-  const moonPhrase = scene && profile ? framePhrase(azimuthOffset(profile.bearing, scene.moon.azimuth), scene.moon.altitude, profile.aimAlt, hFov, vFov) : '';
+  const sunPhrase = scene && profile ? framePhrase(azimuthOffset(profile.bearing, scene.sun.azimuth), scene.sun.altitude, sightAlt, hFov, vFov) : '';
+  const moonPhrase = scene && profile ? framePhrase(azimuthOffset(profile.bearing, scene.moon.azimuth), scene.moon.altitude, sightAlt, hFov, vFov) : '';
   const active = scene?.icons.filter((icon) => icon.active && icon.kind !== 'sun' && icon.kind !== 'moon' && icon.kind !== 'star').map((icon) => icon.name) ?? [];
   const activeText = unique(active).slice(0, 4).join(' · ');
   const ratioDeg = heightDeg > 0 && scene ? scene.moon.diameterDeg / heightDeg : 0;
@@ -204,7 +266,12 @@ export function SightlineTool({
       data-subject-height={heightM}
       data-subject-width={kind === 'object' ? widthM : shape.shoulderM}
       data-camera-height={cameraM}
-      data-lens-mm={focal}
+      data-lens-mm={VIEW_FOCAL_MM}
+      data-frames={[...frames].sort((a, b) => a - b).join(',')}
+      data-skyline={skylineState}
+      data-ground-alt={feetAlt === null ? '' : feetAlt.toFixed(2)}
+      data-ridge-alt={centerColumn?.altitude === null || centerColumn?.altitude === undefined ? '' : centerColumn.altitude.toFixed(2)}
+      data-sight-alt={profile ? sightAlt.toFixed(2) : ''}
       data-hfov={hFov.toFixed(3)}
       data-vfov={vFov.toFixed(3)}
       data-distance-m={profile ? profile.groundM.toFixed(1) : ''}
@@ -234,7 +301,7 @@ export function SightlineTool({
       aria-label="시선"
     >
       <h3>시선</h3>
-      <p>작가와 대상, 렌즈 화각, 그날의 하늘을 한 프레임에 둡니다.</p>
+      <p>작가와 대상, 화면 속 능선, 그날의 하늘을 한 프레임에 둡니다.</p>
       <div className="sight-row">
         <button type="button" className="field-btn" data-place="photographer" aria-pressed={placing === 'photographer'} onClick={() => onPlacing(placing === 'photographer' ? null : 'photographer')}>
           작가 찍기
@@ -300,26 +367,21 @@ export function SightlineTool({
           m
         </label>
       </div>
-      <div className="sight-row" role="group" aria-label="렌즈">
-        {LENS_PRESETS.map((mm) => (
-          <button key={mm} type="button" className="field-btn" data-lens={mm} aria-pressed={focal === mm} onClick={() => setFocal(mm)}>
+      <div className="sight-row sight-focal" role="group" aria-label="화각선">
+        {FRAME_FOCALS.map((mm) => (
+          <button
+            key={mm}
+            type="button"
+            className="field-btn"
+            data-focal={mm}
+            aria-pressed={frames.includes(mm)}
+            onClick={() =>
+              setFrames((current) => (current.includes(mm) ? current.filter((item) => item !== mm) : [...current, mm].sort((a, b) => a - b)))
+            }
+          >
             {mm}
           </button>
         ))}
-        <label>
-          mm
-          <input
-            data-lens-custom
-            type="number"
-            min={8}
-            max={800}
-            value={focal}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              if (next >= 8 && next <= 800) setFocal(next);
-            }}
-          />
-        </label>
       </div>
       <div className="sight-row">
         <label>
@@ -339,7 +401,7 @@ export function SightlineTool({
         {distanceM > 0 ? ` · ${kind === 'person' ? '사람' : '사물'} 각크기 ${heightDeg.toFixed(3)}°` : ''}
         {kind === 'object' && distanceM > 0 ? ` · 가로 ${widthDeg.toFixed(3)}°` : ''}
         <br />
-        렌즈 {focal}mm · 가로 {hFov.toFixed(1)}° · 세로 {vFov.toFixed(1)}° · {formatSeoulClock(when)} 서울
+        화면 {VIEW_FOCAL_MM}mm · 가로 {hFov.toFixed(1)}° · 세로 {vFov.toFixed(1)}° · 화각 {[...frames].sort((a, b) => a - b).join(' · ') || '없음'} · {formatSeoulClock(when)} 서울
         {scene ? (
           <>
             <br />
@@ -372,6 +434,12 @@ export function SightlineTool({
           <>
             <br />
             {terrainNote}
+          </>
+        ) : null}
+        {skylineNote && skylineNote !== terrainNote ? (
+          <>
+            <br />
+            {skylineNote}
           </>
         ) : null}
         {ratioDeg > 0 ? (

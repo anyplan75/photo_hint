@@ -1,7 +1,11 @@
-import { bearingDegrees } from '../src/geo';
+import { bearingDegrees, distanceMeters } from '../src/geo';
 import {
+  FRAME_FOCALS,
+  VIEW_FOCAL_MM,
   analyzeProfile,
   angularDiameterDegrees,
+  apparentAltitudeDegrees,
+  assembleSkyline,
   azimuthOffset,
   chordElevation,
   elevationFromRgb,
@@ -9,6 +13,8 @@ import {
   framePhrase,
   inLensFrame,
   personShape,
+  pointFromBearing,
+  skylineProbes,
   SENSOR_HEIGHT_MM,
   SENSOR_WIDTH_MM,
 } from '../src/sightline';
@@ -161,6 +167,77 @@ assert(formatAngle(scene.icons.find((icon) => icon.kind === 'jupiter')?.diameter
 const star = scene.icons.find((icon) => icon.name === '베가');
 assert(star !== undefined && star.altitude > -90 && star.altitude < 90, 'Vega has a real altitude');
 assert(Math.abs(bearingDegrees(33.3, 126.4, 33.34, 126.45) - flat.bearing) < 1e-6, 'bearing matches the map bearing');
+
+assert(VIEW_FOCAL_MM === 24, 'the frame view is wide enough for 24mm');
+assert(FRAME_FOCALS.includes(24) && FRAME_FOCALS.includes(600), 'focal guides include 24mm and 600mm');
+for (const mm of FRAME_FOCALS) {
+  const horizontal = fieldOfView(mm, SENSOR_WIDTH_MM);
+  const vertical = fieldOfView(mm, SENSOR_HEIGHT_MM);
+  assert(horizontal > vertical, `${mm}mm frame is wider than it is tall`);
+  assert(horizontal <= fieldOfView(24, SENSOR_WIDTH_MM) + 1e-9, `${mm}mm fits inside the 24mm view`);
+}
+const wide = fieldOfView(24, SENSOR_WIDTH_MM);
+const tele = fieldOfView(600, SENSOR_WIDTH_MM);
+assert(tele / wide < 0.05, '600mm rectangle is a small crop of the 24mm view');
+
+const origin = { lat: 33.37764, lng: 126.48115 };
+const aim = { lat: 33.36666, lng: 126.51416 };
+const aimBearing = bearingDegrees(origin.lat, origin.lng, aim.lat, aim.lng);
+const aimDistance = distanceMeters(origin.lat, origin.lng, aim.lat, aim.lng);
+const stepped = pointFromBearing(origin.lat, origin.lng, aimBearing, aimDistance);
+assert(distanceMeters(origin.lat, origin.lng, stepped.lat, stepped.lng) > aimDistance - 1, 'a bearing step keeps the distance');
+const probes = skylineProbes(origin, aimBearing, wide, aimDistance);
+assert(probes[0].distanceM === 0, 'the first skyline probe is the camera');
+assert(probes.some((probe) => probe.offsetDeg === 0 && Math.abs(probe.distanceM - aimDistance) < 1), 'the sightline distance is sampled');
+assert(probes.some((probe) => Math.abs(Math.abs(probe.offsetDeg) - wide / 2) < 0.01), 'probes cover the 24mm edges');
+const cameraGround = 800;
+const cameraAbs = cameraGround + 1.5;
+const subjectGround = 1400;
+const elevations = probes.map((probe) => {
+  if (probe.distanceM === 0) return cameraGround;
+  if (Math.abs(probe.offsetDeg) < 0.01 && probe.distanceM < aimDistance * 0.55) return 2000;
+  if (Math.abs(probe.offsetDeg) < 0.01 && probe.distanceM > aimDistance) return 1900;
+  if (Math.abs(probe.distanceM - aimDistance) < 1) return subjectGround;
+  return 900;
+});
+const heightDeg = angularDiameterDegrees(1.7, aimDistance);
+const columns = assembleSkyline({
+  probes,
+  elevations,
+  profileSamples: null,
+  profileElevations: null,
+  cameraAbs,
+  subjectDistanceM: aimDistance,
+  subjectHeightDeg: heightDeg,
+});
+const sightColumn = columns.find((column) => column.offsetDeg === 0);
+const feet = apparentAltitudeDegrees(aimDistance, subjectGround, cameraAbs);
+assert(sightColumn !== undefined && sightColumn.groundAlt !== null && Math.abs(sightColumn.groundAlt - feet) < 1e-6, 'subject ground angle matches the sightline');
+assert(sightColumn !== undefined && sightColumn.occludeAlt !== null && sightColumn.groundAlt !== null && sightColumn.occludeAlt > sightColumn.groundAlt + heightDeg, 'a closer ridge stands above the subject');
+assert(sightColumn !== undefined && sightColumn.altitude !== null && sightColumn.groundAlt !== null && sightColumn.altitude + 1e-6 >= sightColumn.groundAlt, 'the skyline is at least the ground under the subject');
+const hidden = elevations.map((value, index) => (Math.abs(probes[index].offsetDeg - 4) < 0.01 ? null : value));
+const gapped = assembleSkyline({
+  probes,
+  elevations: hidden,
+  profileSamples: null,
+  profileElevations: null,
+  cameraAbs,
+  subjectDistanceM: aimDistance,
+  subjectHeightDeg: heightDeg,
+});
+const missing = gapped.find((column) => Math.abs(column.offsetDeg - 4) < 0.01);
+const kept = gapped.find((column) => Math.abs(column.offsetDeg - 2) < 0.01);
+assert(missing !== undefined && missing.altitude === null && missing.groundAlt === null, 'a failed direction stays empty');
+assert(kept !== undefined && kept.altitude !== null, 'a neighboring direction keeps its measured elevation');
+assert(assembleSkyline({
+  probes,
+  elevations,
+  profileSamples: null,
+  profileElevations: null,
+  cameraAbs: null,
+  subjectDistanceM: aimDistance,
+  subjectHeightDeg: heightDeg,
+}).length === 0, 'missing camera elevation does not invent a skyline');
 
 if (failed) {
   console.error('\nsightline check failed');

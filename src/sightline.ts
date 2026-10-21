@@ -4,6 +4,9 @@ import { bearingDegrees, distanceMeters } from './geo';
 export const SENSOR_WIDTH_MM = 36;
 export const SENSOR_HEIGHT_MM = 24;
 export const LENS_PRESETS = [24, 35, 50, 85, 135, 200] as const;
+/** 프레임에 겹쳐 그리는 초점거리입니다. 화면은 가장 넓은 24mm를 담습니다. */
+export const FRAME_FOCALS = [24, 35, 50, 70, 85, 125, 200, 300, 400, 600] as const;
+export const VIEW_FOCAL_MM = 24;
 
 /** 지구 반지름(m). 시선이 땅의 굽음을 얼마나 피하는지 계산할 때 씁니다. */
 const EARTH_RADIUS_M = 6371000;
@@ -81,6 +84,16 @@ export function slantMeters(groundM: number, cameraAbs: number, centerAbs: numbe
 export function aimAltitudeDegrees(groundM: number, cameraAbs: number, centerAbs: number): number {
   if (!(groundM > 0)) return 0;
   return Math.atan2(centerAbs - cameraAbs, groundM) * (180 / Math.PI);
+}
+
+/**
+ * 촬영 높이에서 본 지면의 고도각(도)입니다.
+ * 지구가 굽어 먼 곳이 내려가므로, 그 굽음만큼 뺀 각입니다.
+ */
+export function apparentAltitudeDegrees(distanceM: number, elevationM: number, cameraAbs: number): number {
+  if (!(distanceM > 0)) return 0;
+  const drop = (distanceM * distanceM) / (2 * EARTH_RADIUS_M);
+  return Math.atan2(elevationM - cameraAbs - drop, distanceM) * (180 / Math.PI);
 }
 
 /** 보는 방향에서 대상 방위가 얼마나 왼쪽·오른쪽인지입니다. 오른쪽이 양수입니다. */
@@ -223,6 +236,135 @@ export function chordElevation(cameraAbs: number, subjectTop: number, distanceM:
 /** 맵박스 지형 타일의 빨강·초록·파랑을 미터 높이로 바꿉니다. */
 export function elevationFromRgb(red: number, green: number, blue: number): number {
   return -10000 + (red * 65536 + green * 256 + blue) * 0.1;
+}
+
+export interface SkylineProbe {
+  offsetDeg: number;
+  distanceM: number;
+  lat: number;
+  lng: number;
+}
+
+export interface SkylineColumn {
+  offsetDeg: number;
+  /** 대상보다 멀거나 같은 지면 중 가장 높은 고도각. 읽지 못한 방향은 null입니다. */
+  altitude: number | null;
+  /** 대상 거리의 지면 고도각. 그 칸을 못 읽으면 null입니다. */
+  groundAlt: number | null;
+  /** 대상보다 앞에서 머리보다 높은 능선. 없으면 null입니다. */
+  occludeAlt: number | null;
+}
+
+/** 24mm 화면을 가로지르는 고도 표본입니다. 작가 위치는 거리 0입니다. */
+export function skylineProbes(
+  from: { lat: number; lng: number },
+  bearingDeg: number,
+  hFovDeg: number,
+  subjectDistanceM: number,
+): SkylineProbe[] {
+  const reach = Math.min(16000, Math.max(subjectDistanceM * 2.2, 8000));
+  const probes: SkylineProbe[] = [{ offsetDeg: 0, distanceM: 0, lat: from.lat, lng: from.lng }];
+  for (const offsetDeg of viewOffsets(hFovDeg)) {
+    const heading = bearingDeg + offsetDeg;
+    for (const distanceM of rayDistances(subjectDistanceM, reach)) {
+      const point = pointFromBearing(from.lat, from.lng, heading, distanceM);
+      probes.push({ offsetDeg, distanceM, lat: point.lat, lng: point.lng });
+    }
+  }
+  return probes;
+}
+
+/** 읽은 높이를 방향별 능선으로 모읍니다. 빈 높이는 이웃으로 메우지 않습니다. */
+export function assembleSkyline(args: {
+  probes: SkylineProbe[];
+  elevations: Array<number | null>;
+  profileSamples: SightSample[] | null;
+  profileElevations: Array<number | null> | null;
+  cameraAbs: number | null;
+  subjectDistanceM: number;
+  subjectHeightDeg: number;
+}): SkylineColumn[] {
+  if (args.cameraAbs === null) return [];
+  const grouped = new Map<number, { distanceM: number; elevationM: number | null }[]>();
+  args.probes.forEach((probe, index) => {
+    if (!(probe.distanceM > 1)) return;
+    const bucket = grouped.get(probe.offsetDeg) ?? [];
+    bucket.push({ distanceM: probe.distanceM, elevationM: args.elevations[index] ?? null });
+    grouped.set(probe.offsetDeg, bucket);
+  });
+  const center = grouped.get(0) ?? [];
+  if (args.profileSamples && args.profileElevations && args.profileSamples.length === args.profileElevations.length) {
+    args.profileSamples.forEach((sample, index) => {
+      center.push({ distanceM: sample.distanceM, elevationM: args.profileElevations?.[index] ?? null });
+    });
+  }
+  grouped.set(0, center);
+  return [...grouped.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([offsetDeg, samples]) => columnFromSamples(offsetDeg, samples, args.cameraAbs as number, args.subjectDistanceM, args.subjectHeightDeg));
+}
+
+function columnFromSamples(
+  offsetDeg: number,
+  samples: { distanceM: number; elevationM: number | null }[],
+  cameraAbs: number,
+  subjectDistanceM: number,
+  subjectHeightDeg: number,
+): SkylineColumn {
+  const known = samples.filter((sample): sample is { distanceM: number; elevationM: number } => sample.elevationM !== null && sample.distanceM > 1);
+  if (known.length === 0) return { offsetDeg, altitude: null, groundAlt: null, occludeAlt: null };
+  let ground: { distanceM: number; elevationM: number } | null = null;
+  for (const sample of known) {
+    if (!ground || Math.abs(sample.distanceM - subjectDistanceM) <= Math.abs(ground.distanceM - subjectDistanceM)) ground = sample;
+  }
+  const groundClose = ground !== null && Math.abs(ground.distanceM - subjectDistanceM) <= Math.max(40, subjectDistanceM * 0.08);
+  const groundAlt = groundClose && ground ? apparentAltitudeDegrees(ground.distanceM, ground.elevationM, cameraAbs) : null;
+  let altitude: number | null = null;
+  let occludeAlt: number | null = null;
+  const headAlt = groundAlt === null ? null : groundAlt + subjectHeightDeg;
+  for (const sample of known) {
+    const alt = apparentAltitudeDegrees(sample.distanceM, sample.elevationM, cameraAbs);
+    if (sample.distanceM >= subjectDistanceM * 0.98 && (altitude === null || alt > altitude)) altitude = alt;
+    if (headAlt !== null && sample.distanceM < subjectDistanceM * 0.97 && alt > headAlt && (occludeAlt === null || alt > occludeAlt)) occludeAlt = alt;
+  }
+  return { offsetDeg, altitude, groundAlt, occludeAlt };
+}
+
+function viewOffsets(hFovDeg: number): number[] {
+  const edge = Math.max(0, hFovDeg / 2);
+  const offsets = new Set<number>([0, -edge, edge]);
+  for (let step = 2; step < edge; step += 2) {
+    offsets.add(-step);
+    offsets.add(step);
+  }
+  return [...offsets].sort((a, b) => a - b);
+}
+
+function rayDistances(subjectM: number, reachM: number): number[] {
+  const distances = new Set<number>([subjectM]);
+  const nearEnd = Math.min(subjectM * 0.9, reachM);
+  for (let index = 1; index <= 7; index += 1) {
+    const distance = 100 + ((nearEnd - 100) * index) / 8;
+    if (distance > 40 && distance < subjectM * 0.97) distances.add(distance);
+  }
+  let far = subjectM * 1.25;
+  while (far < reachM) {
+    distances.add(far);
+    far *= 1.4;
+  }
+  if (reachM > subjectM * 1.05) distances.add(reachM);
+  return [...distances].sort((a, b) => a - b);
+}
+
+export function pointFromBearing(lat: number, lng: number, bearingDeg: number, distanceM: number): { lat: number; lng: number } {
+  if (!(distanceM > 0)) return { lat, lng };
+  const delta = distanceM / EARTH_RADIUS_M;
+  const theta = (bearingDeg * Math.PI) / 180;
+  const phi1 = (lat * Math.PI) / 180;
+  const lambda1 = (lng * Math.PI) / 180;
+  const phi2 = Math.asin(Math.sin(phi1) * Math.cos(delta) + Math.cos(phi1) * Math.sin(delta) * Math.cos(theta));
+  const lambda2 = lambda1 + Math.atan2(Math.sin(theta) * Math.sin(delta) * Math.cos(phi1), Math.cos(delta) - Math.sin(phi1) * Math.sin(phi2));
+  return { lat: (phi2 * 180) / Math.PI, lng: ((((lambda2 * 180) / Math.PI) + 540) % 360) - 180 };
 }
 
 function pointOnSphere(from: { lat: number; lng: number }, to: { lat: number; lng: number }, t: number): { lat: number; lng: number } {
