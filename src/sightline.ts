@@ -500,10 +500,14 @@ function rayDistances(subjectM: number, reachM: number): number[] {
     const distance = 100 + ((nearEnd - 100) * index) / 8;
     if (distance > 40 && distance < subjectM * 0.97) distances.add(distance);
   }
+  // 두 점이 같은 자리면 거리가 0이라 곱해도 늘지 않아 화면이 멈춥니다.
   let far = subjectM * 1.25;
+  if (!(far > 0)) far = 80;
   while (far < reachM) {
     distances.add(far);
-    far *= 1.4;
+    const next = far * 1.4;
+    if (!(next > far)) break;
+    far = next;
   }
   if (reachM > subjectM * 1.05) distances.add(reachM);
   return [...distances].sort((a, b) => a - b);
