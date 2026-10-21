@@ -41,11 +41,10 @@ export interface SightChoice {
 export function SightlineTool({
   photographer,
   subject,
-  placing,
   choices,
   onPhotographer,
   onSubject,
-  onPlacing,
+  onDrop,
   onRidge,
   onRim,
   onOptics,
@@ -56,11 +55,11 @@ export function SightlineTool({
 }: {
   photographer: SightPlace | null;
   subject: SightPlace | null;
-  placing: 'photographer' | 'subject' | null;
   choices: SightChoice[];
   onPhotographer: (place: SightPlace) => void;
   onSubject: (place: SightPlace) => void;
-  onPlacing: (role: 'photographer' | 'subject' | null) => void;
+  /** 아직 없는 핀만 지도 가운데에 둡니다. 있는 핀은 그대로 둡니다. */
+  onDrop: (role: 'photographer' | 'subject') => void;
   onRidge: (place: SightPlace | null) => void;
   onRim?: (rim: SkyRim | null) => void;
   onOptics?: (optics: SightOptics) => void;
@@ -408,11 +407,11 @@ export function SightlineTool({
       <h3>시선</h3>
       {phone ? null : <p>작가와 대상, 화면 속 능선, 그날의 하늘을 한 프레임에 둡니다.</p>}
       <div className="sight-row">
-        <button type="button" className="field-btn" data-place="photographer" aria-pressed={placing === 'photographer'} onClick={() => onPlacing(placing === 'photographer' ? null : 'photographer')}>
-          작가 찍기
+        <button type="button" className="field-btn" data-place="photographer" aria-pressed={photographer !== null} onClick={() => onDrop('photographer')}>
+          작가위치
         </button>
-        <button type="button" className="field-btn" data-place="subject" aria-pressed={placing === 'subject'} onClick={() => onPlacing(placing === 'subject' ? null : 'subject')}>
-          대상 찍기
+        <button type="button" className="field-btn" data-place="subject" aria-pressed={subject !== null} onClick={() => onDrop('subject')}>
+          피사체위치
         </button>
       </div>
       <div className="sight-row">
@@ -437,7 +436,7 @@ export function SightlineTool({
         작가 {placeText(photographer)}
         <br />
         대상 {placeText(subject)}
-        {placing ? ` · 지도를 눌러 ${placing === 'photographer' ? '작가를' : '대상을'} 놓으세요.` : ''}
+        {photographer || subject ? ' · 핀을 끌어 옮기세요.' : ''}
       </p>
       <div className="sight-row">
         <button type="button" className="field-btn" data-subject-kind="person" aria-pressed={kind === 'person'} onClick={() => setKind('person')}>

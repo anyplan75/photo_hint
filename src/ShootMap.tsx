@@ -73,7 +73,8 @@ export function ShootMap({
   external = null,
   road = null,
   sight = null,
-  onPlaceSight,
+  bindCenter,
+  onMoveSight,
   rim = null,
   onAddress,
   sensor = CAMERA_SENSORS[0],
@@ -115,9 +116,11 @@ export function ShootMap({
     photographer: { lat: number; lng: number } | null;
     subject: { lat: number; lng: number } | null;
     ridge: { lat: number; lng: number } | null;
-    placing: 'photographer' | 'subject' | null;
   } | null;
-  onPlaceSight?: (lat: number, lng: number) => void;
+  /** 버튼을 누를 때 지도 가운데를 읽습니다. */
+  bindCenter?: (read: (() => { lat: number; lng: number } | null) | null) => void;
+  /** 작가·피사체 핀을 끌면 시선 위치를 바꿉니다. */
+  onMoveSight?: (role: 'photographer' | 'subject', lat: number, lng: number) => void;
   /** 해와 달의 방위입니다. 지도 테두리에 둡니다. */
   rim?: SkyRim | null;
   /** 지도 왼쪽 위 주소 검색이 고른 위치입니다. */
@@ -145,8 +148,10 @@ export function ShootMap({
   const removePoint = external?.removePoint ?? internal.removePoint;
   const onDragRef = useRef(onDrag);
   onDragRef.current = onDrag;
-  const onPlaceSightRef = useRef(onPlaceSight);
-  onPlaceSightRef.current = onPlaceSight;
+  const bindCenterRef = useRef(bindCenter);
+  bindCenterRef.current = bindCenter;
+  const onMoveSightRef = useRef(onMoveSight);
+  onMoveSightRef.current = onMoveSight;
   const onAddressRef = useRef(onAddress);
   onAddressRef.current = onAddress;
   const rimRef = useRef(rim);
@@ -154,9 +159,8 @@ export function ShootMap({
   const sensorRef = useRef(sensor);
   sensorRef.current = sensor;
   const rayMarkersRef = useRef<mapboxgl.Marker[]>([]);
-  const placingRef = useRef(sight?.placing ?? null);
-  placingRef.current = sight?.placing ?? null;
   const sightMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  const skipSightFit = useRef(false);
   const [draft, setDraft] = useState<{ lat: number; lng: number; x: number; y: number } | null>(null);
   const [name, setName] = useState('');
   const [pointError, setPointError] = useState<string | null>(null);
@@ -265,7 +269,6 @@ export function ShootMap({
         return;
       }
       if (target instanceof Element && target.closest('.map-pin, .map-info, .map-search, .point-save')) return;
-      if (placingRef.current) onPlaceSightRef.current?.(event.lngLat.lat, event.lngLat.lng);
     });
     map.on('contextmenu', (event) => {
       event.preventDefault();
@@ -278,6 +281,10 @@ export function ShootMap({
     const blockMenu = (event: Event) => event.preventDefault();
     map.getCanvas().addEventListener('contextmenu', blockMenu);
     mapRef.current = map;
+    bindCenterRef.current?.(() => {
+      const current = map.getCenter();
+      return { lat: current.lat, lng: current.lng };
+    });
     viewReady.current = false;
     const observer = new ResizeObserver(() => map.resize());
     observer.observe(element);
@@ -290,6 +297,7 @@ export function ShootMap({
       sightMarkersRef.current.forEach((marker) => marker.remove());
       sightMarkersRef.current = [];
       map.getCanvas().removeEventListener('contextmenu', blockMenu);
+      bindCenterRef.current?.(null);
       map.remove();
       mapRef.current = null;
     };
@@ -433,10 +441,20 @@ export function ShootMap({
         return;
       }
       if (overlay.photographer) {
-        sightMarkersRef.current.push(sightMarker(map, overlay.photographer.lat, overlay.photographer.lng, 'author', '작가'));
+        sightMarkersRef.current.push(
+          sightMarker(map, overlay.photographer.lat, overlay.photographer.lng, 'author', '작가', (lat, lng) => {
+            skipSightFit.current = true;
+            onMoveSightRef.current?.('photographer', lat, lng);
+          }),
+        );
       }
       if (overlay.subject) {
-        sightMarkersRef.current.push(sightMarker(map, overlay.subject.lat, overlay.subject.lng, 'subject', '대상'));
+        sightMarkersRef.current.push(
+          sightMarker(map, overlay.subject.lat, overlay.subject.lng, 'subject', '피사체', (lat, lng) => {
+            skipSightFit.current = true;
+            onMoveSightRef.current?.('subject', lat, lng);
+          }),
+        );
       }
       if (overlay.ridge) {
         sightMarkersRef.current.push(sightMarker(map, overlay.ridge.lat, overlay.ridge.lng, 'ridge', '능선'));
@@ -449,10 +467,14 @@ export function ShootMap({
       const pairKey = line ? `${line[0].join(',')}|${line[1].join(',')}` : '';
       if (line && sightFitRef.current !== pairKey) {
         sightFitRef.current = pairKey;
-        const bounds = new mapboxgl.LngLatBounds();
-        bounds.extend(line[0]);
-        bounds.extend(line[1]);
-        map.fitBounds(bounds, { padding: 80, maxZoom: 13, duration: 600 });
+        const skip = skipSightFit.current;
+        skipSightFit.current = false;
+        if (!skip) {
+          const bounds = new mapboxgl.LngLatBounds();
+          bounds.extend(line[0]);
+          bounds.extend(line[1]);
+          map.fitBounds(bounds, { padding: 80, maxZoom: 13, duration: 600 });
+        }
       }
     };
     if (map.isStyleLoaded()) drawSight();
@@ -598,7 +620,6 @@ export function ShootMap({
       data-selected-place={selectionView?.name ?? ''}
       data-route={road?.route && road.route.length > 1 ? 'on' : 'off'}
       data-route-count={road?.route?.length ?? 0}
-      data-placing={sight?.placing ?? ''}
       data-sight-line={sight?.photographer && sight?.subject ? 'on' : 'off'}
       data-saved-count={points.length}
       data-point-draft={draft ? 'open' : 'closed'}
@@ -851,14 +872,28 @@ function roadMarker(
   return new mapboxgl.Marker({ element, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
 }
 
-function sightMarker(map: mapboxgl.Map, lat: number, lng: number, role: 'author' | 'subject' | 'ridge', label: string): mapboxgl.Marker {
+function sightMarker(
+  map: mapboxgl.Map,
+  lat: number,
+  lng: number,
+  role: 'author' | 'subject' | 'ridge',
+  label: string,
+  onDragEnd?: (lat: number, lng: number) => void,
+): mapboxgl.Marker {
   const element = document.createElement('span');
   element.className = `map-pin ${role}`;
   element.dataset.sightPin = role;
   element.textContent = role === 'ridge' ? '' : label.slice(0, 1);
   element.setAttribute('aria-label', label);
   element.addEventListener('click', (event) => event.stopPropagation());
-  return new mapboxgl.Marker({ element, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
+  const marker = new mapboxgl.Marker({ element, anchor: 'center', draggable: Boolean(onDragEnd) }).setLngLat([lng, lat]).addTo(map);
+  if (onDragEnd) {
+    marker.on('dragend', () => {
+      const next = marker.getLngLat();
+      onDragEnd(next.lat, next.lng);
+    });
+  }
+  return marker;
 }
 
 function setLine(

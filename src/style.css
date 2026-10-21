@@ -1160,17 +1160,14 @@ button:focus-visible, input:focus-visible {
   line-height: 22px;
   text-align: center;
 }
-.map-pin.author { background: #d6f25c; color: #14200a; border-color: #14200a; }
-.map-pin.subject { background: #ffb199; color: #1a0a06; border-color: #1a0a06; }
+.map-pin.author { background: #d6f25c; color: #14200a; border-color: #14200a; cursor: grab; touch-action: none; }
+.map-pin.subject { background: #ffb199; color: #1a0a06; border-color: #1a0a06; cursor: grab; touch-action: none; }
 .map-pin.ridge {
   width: 14px;
   height: 14px;
   background: transparent;
   border: 2px solid #ff6b4a;
 }
-.shoot-map[data-placing='photographer'] .map-canvas,
-.shoot-map[data-placing='subject'] .map-canvas { cursor: crosshair; }
-
 .sightline {
   display: flex;
   flex-direction: column;

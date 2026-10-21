@@ -67,7 +67,7 @@ export function App() {
   const [optics, setOptics] = useState<SightOptics | null>(null);
   const [photographer, setPhotographer] = useState<SightPlace | null>(null);
   const [subjectPlace, setSubjectPlace] = useState<SightPlace | null>(null);
-  const [placing, setPlacing] = useState<'photographer' | 'subject' | null>(null);
+  const readMapCenter = useRef<(() => { lat: number; lng: number } | null) | null>(null);
   const [simRun, setSimRun] = useState(false);
   const [frameHost, setFrameHost] = useState<HTMLDivElement | null>(null);
   const [ridge, setRidge] = useState<SightPlace | null>(null);
@@ -427,12 +427,14 @@ export function App() {
                 onDrag={(lat, lng) => setCenter({ lat, lng })}
                 selectRequest={selectRequest}
                 road={road}
-                sight={{ photographer, subject: subjectPlace, ridge, placing }}
-                onPlaceSight={(lat, lng) => {
-                  const place = { lat, lng, name: null };
-                  if (placing === 'photographer') setPhotographer(place);
-                  if (placing === 'subject') setSubjectPlace(place);
-                  setPlacing(null);
+                sight={{ photographer, subject: subjectPlace, ridge }}
+                bindCenter={(read) => {
+                  readMapCenter.current = read;
+                }}
+                onMoveSight={(role, lat, lng) => {
+                  const move = (place: SightPlace | null): SightPlace => ({ ...(place ?? { name: null }), lat, lng });
+                  if (role === 'photographer') setPhotographer((place) => move(place));
+                  if (role === 'subject') setSubjectPlace((place) => move(place));
                 }}
                 external={{
                   points: sync.points,
@@ -451,21 +453,20 @@ export function App() {
               <SightlineTool
                 photographer={photographer}
                 subject={subjectPlace}
-                placing={placing}
                 choices={sightChoices}
                 phone={phone}
                 running={simOn}
                 onRun={() => setSimRun(true)}
                 frameHost={frameHost}
-                onPhotographer={(place) => {
-                  setPhotographer(place);
-                  setPlacing(null);
+                onPhotographer={setPhotographer}
+                onSubject={setSubjectPlace}
+                onDrop={(role) => {
+                  const live = readMapCenter.current?.();
+                  const here = live ?? center;
+                  const place = { lat: here.lat, lng: here.lng, name: null };
+                  if (role === 'photographer') setPhotographer((current) => current ?? place);
+                  if (role === 'subject') setSubjectPlace((current) => current ?? place);
                 }}
-                onSubject={(place) => {
-                  setSubjectPlace(place);
-                  setPlacing(null);
-                }}
-                onPlacing={setPlacing}
                 onRidge={setRidge}
                 onRim={setSkyRim}
                 onOptics={setOptics}
