@@ -18,7 +18,7 @@ enum AppMain {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate {
     private var window: NSWindow?
     private var webView: WKWebView?
 
@@ -32,25 +32,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         )
         window.title = "여기야 여기"
         window.minSize = NSSize(width: 960, height: 640)
-        window.backgroundColor = NSColor(srgbRed: 16 / 255, green: 20 / 255, blue: 28 / 255, alpha: 1)
+        let pageColor = NSColor(srgbRed: 8 / 255, green: 18 / 255, blue: 23 / 255, alpha: 1)
+        window.backgroundColor = pageColor
+        window.delegate = self
         // 메뉴 막대와 독 사이의 보이는 화면을 가로·세로로 끝까지 채웁니다.
         // 예전 이름에 저장된 1440×900 창은 다시 열지 않습니다.
         window.setFrame(screen, display: true)
         window.setFrameAutosaveName("GeuttaeMainWindowFill")
 
-        let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let content = window.contentView!
+        let web = WKWebView(frame: content.bounds, configuration: WKWebViewConfiguration())
+        // 자동 레이아웃은 웹 화면을 창 한가운데의 좁은 너비로 남깁니다. 창 크기에 맞춰 늘립니다.
+        web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
-        web.translatesAutoresizingMaskIntoConstraints = false
-        web.underPageBackgroundColor = window.backgroundColor
-        if let content = window.contentView {
-            content.addSubview(web)
-            NSLayoutConstraint.activate([
-                web.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-                web.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-                web.topAnchor.constraint(equalTo: content.topAnchor),
-                web.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            ])
-        }
+        web.underPageBackgroundColor = pageColor
+        content.addSubview(web)
+        web.frame = content.bounds
         web.load(URLRequest(url: site))
 
         window.makeKeyAndOrderFront(nil)
@@ -61,6 +58,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
         self.window = window
         self.webView = web
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        guard let content = window?.contentView, let webView else { return }
+        webView.frame = content.bounds
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

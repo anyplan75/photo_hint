@@ -23,7 +23,10 @@
 * { box-sizing: border-box; }
 
 html, body, #root {
+  width: 100%;
+  max-width: none;
   height: 100%;
+  margin: 0;
   overflow: hidden;
 }
 
@@ -807,6 +810,12 @@ button:focus-visible, input:focus-visible {
 
 @media (min-width: 900px) {
   .app.shell {
+    position: fixed;
+    inset: 0;
+    width: auto;
+    max-width: none;
+    height: auto;
+    margin: 0;
     grid-template-columns: 210px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
   }
