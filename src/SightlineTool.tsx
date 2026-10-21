@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CAMERA_SENSORS,
   FRAME_FOCALS,
@@ -48,6 +49,10 @@ export function SightlineTool({
   onRidge,
   onRim,
   onOptics,
+  phone = false,
+  running = false,
+  onRun,
+  frameHost = null,
 }: {
   photographer: SightPlace | null;
   subject: SightPlace | null;
@@ -59,6 +64,11 @@ export function SightlineTool({
   onRidge: (place: SightPlace | null) => void;
   onRim?: (rim: SkyRim | null) => void;
   onOptics?: (optics: SightOptics) => void;
+  /** 아이폰에서는 긴 안내를 접고, 실행 뒤에만 프레임을 결과 화면으로 옮깁니다. */
+  phone?: boolean;
+  running?: boolean;
+  onRun?: () => void;
+  frameHost?: HTMLElement | null;
 }) {
   const [kind, setKind] = useState<'person' | 'object'>('person');
   const [heightText, setHeightText] = useState('1.7');
@@ -246,7 +256,7 @@ export function SightlineTool({
     const frame = frameRef.current;
     const strip = stripRef.current;
     const profileCanvas = profileRef.current;
-    if (!box || !frame || !strip || !profileCanvas) return;
+    if (!box || !frame) return;
     const draw = () => {
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       const cssWidth = box.clientWidth;
@@ -273,8 +283,8 @@ export function SightlineTool({
           );
         });
       }
-      const stripWidth = strip.clientWidth || box.clientWidth;
-      if (stripWidth > 20) {
+      const stripWidth = strip?.clientWidth || box.clientWidth;
+      if (strip && profileCanvas && stripWidth > 20) {
         paint(strip, stripWidth, 64, ratio, (ctx) => drawSkyStrip(ctx, stripWidth, 64, profile?.bearing ?? 0, scene));
         paint(profileCanvas, stripWidth, 96, ratio, (ctx) => drawProfile(ctx, stripWidth, 96, profile));
       }
@@ -283,7 +293,7 @@ export function SightlineTool({
     const observer = new ResizeObserver(draw);
     observer.observe(box);
     return () => observer.disconnect();
-  }, [hFov, vFov, profile, frameSubject, scene, sightAlt, skyline, frames, sensor.widthMm, sensor.heightMm]);
+  }, [hFov, vFov, profile, frameSubject, scene, sightAlt, skyline, frames, sensor.widthMm, sensor.heightMm, phone, running, frameHost]);
 
   const sunCue = scene && profile ? skyBodyCue('해', scene.sun.azimuth, scene.sun.altitude, profile.bearing, sightAlt, hFov, vFov, skyline) : null;
   const moonCue = scene && profile ? skyBodyCue('달', scene.moon.azimuth, scene.moon.altitude, profile.bearing, sightAlt, hFov, vFov, skyline) : null;
@@ -393,9 +403,10 @@ export function SightlineTool({
       data-ratio-deg={ratioDeg ? ratioDeg.toFixed(4) : ''}
       data-ratio-px={ratioPx ? ratioPx.toFixed(4) : ''}
       aria-label="시선"
+      data-sim={phone ? (running ? 'run' : 'setup') : 'wide'}
     >
       <h3>시선</h3>
-      <p>작가와 대상, 화면 속 능선, 그날의 하늘을 한 프레임에 둡니다.</p>
+      {phone ? null : <p>작가와 대상, 화면 속 능선, 그날의 하늘을 한 프레임에 둡니다.</p>}
       <div className="sight-row">
         <button type="button" className="field-btn" data-place="photographer" aria-pressed={placing === 'photographer'} onClick={() => onPlacing(placing === 'photographer' ? null : 'photographer')}>
           작가 찍기
@@ -521,6 +532,12 @@ export function SightlineTool({
           {playing ? '멈춤' : '재생'}
         </button>
       </div>
+      {phone ? (
+        <button type="button" className="field-btn sea" data-sim-run disabled={!photographer || !subject} onClick={() => onRun?.()}>
+          시뮬레이션 실행
+        </button>
+      ) : null}
+      {phone ? null : (
       <p className="sight-read" data-sight-readout>
         {profile ? `거리 ${formatKm(profile.groundM)} · 방위 ${profile.bearing.toFixed(0)}°` : '두 점을 놓으면 거리와 방위를 계산합니다.'}
         {distanceM > 0 ? ` · ${kind === 'person' ? '사람' : '사물'} 각크기 ${heightDeg.toFixed(3)}°` : ''}
@@ -574,14 +591,34 @@ export function SightlineTool({
           </>
         ) : null}
       </p>
-      <div className="sight-frame-box" ref={frameBox} style={{ aspectRatio: `${hFov} / ${vFov}` }}>
-        <canvas ref={frameRef} data-sight-frame />
-        <p className="sensor-readout">{readout}</p>
-      </div>
-      <canvas ref={stripRef} className="sight-strip" data-sight-strip />
-      <canvas ref={profileRef} className="sight-profile" data-sight-profile />
+      )}
+      {frameNode(phone, running, frameHost, frameBox, frameRef, readout, hFov, vFov)}
+      {phone ? null : <canvas ref={stripRef} className="sight-strip" data-sight-strip />}
+      {phone ? null : <canvas ref={profileRef} className="sight-profile" data-sight-profile />}
     </section>
   );
+}
+
+function frameNode(
+  phone: boolean,
+  running: boolean,
+  frameHost: HTMLElement | null,
+  frameBox: RefObject<HTMLDivElement | null>,
+  frameRef: RefObject<HTMLCanvasElement | null>,
+  readout: string,
+  hFov: number,
+  vFov: number,
+): ReactNode {
+  if (phone && !running) return null;
+  const frame = (
+    <div className="sight-frame-box" ref={frameBox} style={phone ? undefined : { aspectRatio: `${hFov} / ${vFov}` }}>
+      <canvas ref={frameRef} data-sight-frame />
+      <p className="sensor-readout">{readout}</p>
+    </div>
+  );
+  if (phone && running && frameHost) return createPortal(frame, frameHost);
+  if (phone) return null;
+  return frame;
 }
 
 function paint(

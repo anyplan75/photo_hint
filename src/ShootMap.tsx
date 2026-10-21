@@ -77,6 +77,7 @@ export function ShootMap({
   rim = null,
   onAddress,
   sensor = CAMERA_SENSORS[0],
+  phone = false,
 }: {
   region: string;
   center: { lat: number; lng: number } | null;
@@ -123,6 +124,8 @@ export function ShootMap({
   onAddress?: (hit: AddressHit) => void;
   /** 화각 부채꼴에 쓰는 센서입니다. */
   sensor?: CameraSensor;
+  /** 아이폰에서는 주소 칸을 접어 두고, 검색 버튼을 눌러야 엽니다. */
+  phone?: boolean;
 }) {
   const token = mapboxPublicToken();
   const canvas = useRef<HTMLDivElement>(null);
@@ -612,7 +615,7 @@ export function ShootMap({
           <div className="map-frame" ref={frameRef}>
             <div ref={canvas} className="map-canvas" data-map-canvas data-terrain={view === '3d' ? 'on' : 'off'} />
             {rim && frameSize.width > 0 ? <MapRim rim={rim} bearing={mapBearing} width={frameSize.width} height={frameSize.height} /> : null}
-            <MapAddressSearch center={center} onPick={(hit) => onAddressRef.current?.(hit)} />
+            <MapAddressSearch phone={phone} center={center} onPick={(hit) => onAddressRef.current?.(hit)} />
             {draft ? (
               <form
                 className="point-save"
@@ -1040,14 +1043,18 @@ function clamp(value: number, span: number, box: number): number {
 function MapAddressSearch({
   center,
   onPick,
+  phone,
 }: {
   center: { lat: number; lng: number } | null;
   onPick: (hit: AddressHit) => void;
+  phone: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<AddressHit[]>([]);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const showField = !phone || open;
 
   async function findAddress(event: FormEvent) {
     event.preventDefault();
@@ -1074,8 +1081,18 @@ function MapAddressSearch({
     }
   }
 
+  if (!showField) {
+    return (
+      <div className="map-search map-search-closed" data-map-search data-map-search-state="button">
+        <button type="button" className="field-btn sea" data-map-search-open onClick={() => setOpen(true)}>
+          검색
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <form className="map-search" data-map-search onSubmit={findAddress} onContextMenu={(event) => event.preventDefault()}>
+    <form className="map-search" data-map-search data-map-search-state="field" onSubmit={findAddress} onContextMenu={(event) => event.preventDefault()}>
       <label className="sr" htmlFor="map-address-query">
         주소
       </label>

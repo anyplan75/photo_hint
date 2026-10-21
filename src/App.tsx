@@ -5,6 +5,7 @@ import { loadFieldPrefs, writeFieldPrefs, type FieldPrefs } from './field-prefs'
 import { AiStatus } from './AiStatus';
 import { askForArCamera, askForArOrientation } from './ar-camera';
 import { ArView } from './ArView';
+import { PhoneSim } from './PhoneSim';
 import { GuidePanel } from './GuidePanel';
 import { PublicNotes } from './PublicNotes';
 import { MyPlaces } from './MyPlaces';
@@ -67,6 +68,8 @@ export function App() {
   const [photographer, setPhotographer] = useState<SightPlace | null>(null);
   const [subjectPlace, setSubjectPlace] = useState<SightPlace | null>(null);
   const [placing, setPlacing] = useState<'photographer' | 'subject' | null>(null);
+  const [simRun, setSimRun] = useState(false);
+  const [frameHost, setFrameHost] = useState<HTMLDivElement | null>(null);
   const [ridge, setRidge] = useState<SightPlace | null>(null);
   const [spots, setSpots] = useState<Spot[]>([]);
   const [busy, setBusy] = useState(false);
@@ -382,6 +385,10 @@ export function App() {
   const listTitle = useMyLocation ? '내 주변' : regionTitle;
   const phone = usePhoneLayout();
   const shown: Tab = !phone && tab === 'ar' ? 'map' : tab;
+  const simOn = phone && simRun && photographer !== null && subjectPlace !== null;
+  useEffect(() => {
+    if (!phone) setSimRun(false);
+  }, [phone]);
 
   return (
     <main className="app shell" data-shell={shown} data-phone={phone ? 'yes' : 'no'}>
@@ -392,6 +399,9 @@ export function App() {
       </aside>
       <div className="stage">
         <h1 className="phone-title">여기야 여기</h1>
+        {simOn && photographer && subjectPlace ? (
+          <PhoneSim photographer={photographer} subject={subjectPlace} onBack={() => setSimRun(false)} onFrameHost={setFrameHost} />
+        ) : null}
         {shown === 'map' && (
           <div className="field">
             <div className="field-map">
@@ -434,6 +444,7 @@ export function App() {
                 rim={skyRim}
                 onAddress={setAddressHit}
                 sensor={optics?.sensor}
+                phone={phone}
               />
             </div>
             <div className="field-list">
@@ -442,6 +453,10 @@ export function App() {
                 subject={subjectPlace}
                 placing={placing}
                 choices={sightChoices}
+                phone={phone}
+                running={simOn}
+                onRun={() => setSimRun(true)}
+                frameHost={frameHost}
                 onPhotographer={(place) => {
                   setPhotographer(place);
                   setPlacing(null);
