@@ -1,13 +1,15 @@
-import Darwin
 import UIKit
 import WebKit
 import Capacitor
 
-@_silgen_name("geuttae_cocoa_rect")
-private func geuttaeCocoaRect(_ object: UnsafeMutableRawPointer, _ name: UnsafePointer<CChar>) -> CGRect
+@_silgen_name("geuttae_apply_visible_frame")
+private func geuttaeApplyVisibleFrame()
 
-@_silgen_name("geuttae_set_cocoa_frame")
-private func geuttaeSetCocoaFrame(_ window: UnsafeMutableRawPointer, _ frame: CGRect)
+@_silgen_name("geuttae_visible_system_frame")
+private func geuttaeVisibleSystemFrame() -> CGRect
+
+@_silgen_name("geuttae_request_system_frame")
+private func geuttaeRequestSystemFrame(_ scene: UIWindowScene, _ x: Double, _ y: Double, _ width: Double, _ height: Double)
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
@@ -17,14 +19,18 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         window = UIWindow(windowScene: windowScene)
         window?.rootViewController = GeuttaeBridgeViewController()
+        if ProcessInfo.processInfo.isiOSAppOnMac, let restrictions = windowScene.sizeRestrictions {
+            restrictions.minimumSize = CGSize(width: 960, height: 640)
+            restrictions.maximumSize = CGSize(width: 8000, height: 8000)
+        }
         window?.makeKeyAndVisible()
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
-        fillMacWindow(windowScene)
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
         guard let windowScene = scene as? UIWindowScene else { return }
+        guard window != nil else { return }
         fillMacWindow(windowScene)
     }
 
@@ -36,98 +42,40 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         SceneDelegateProxy.shared.scene(scene, continue: userActivity)
     }
 
-    /// 맥에서 아이폰 앱으로 열릴 때만 창을 키웁니다. 아이폰·아이패드에서는 아무 것도 하지 않습니다.
+    /// 맥에서 아이폰 앱으로 열릴 때만, 창이 생긴 뒤에 크기를 맞춥니다.
     private func fillMacWindow(_ windowScene: UIWindowScene) {
         guard ProcessInfo.processInfo.isiOSAppOnMac else { return }
-        let until = Date().addingTimeInterval(4)
-        if until > macFillUntil { macFillUntil = until }
+        guard window != nil else { return }
         MacHostedWindow.fill(windowScene)
-        for delay in [0.3, 1.0, 2.0, 3.5] {
+        guard !didScheduleMacFill else { return }
+        didScheduleMacFill = true
+        for delay in [0.6, 1.6, 3.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak windowScene] in
-                guard let self, let windowScene, Date() < self.macFillUntil else { return }
+                guard let self, let windowScene, self.window != nil else { return }
                 MacHostedWindow.fill(windowScene)
             }
         }
     }
 
-    private var macFillUntil = Date.distantPast
+    private var didScheduleMacFill = false
+
 }
 
-/// 맥의 메뉴 막대와 독 사이로 아이폰 앱 창을 맞춥니다.
+/// 맥의 메뉴 막대와 독 사이로 아이폰 앱 창을 맞춥니다. 화면 정보를 못 읽으면 그냥 둡니다.
 private enum MacHostedWindow {
     static func fill(_ windowScene: UIWindowScene) {
         guard ProcessInfo.processInfo.isiOSAppOnMac else { return }
-        loadAppKit()
-        guard let screen = primaryScreen() else { return }
-        let cocoaFrame = cocoaRect(screen, "frame")
-        let visible = cocoaRect(screen, "visibleFrame")
-        guard cocoaFrame.width > 1, cocoaFrame.height > 1, visible.width > 1, visible.height > 1 else { return }
-
-        for window in macWindows() {
-            setCocoaFrame(window, visible)
-        }
-        guard #available(iOS 16.0, *) else { return }
+        guard windowScene.windows.isEmpty == false else { return }
+        let systemFrame = geuttaeVisibleSystemFrame()
+        guard systemFrame.width > 2, systemFrame.height > 2 else { return }
         if let restrictions = windowScene.sizeRestrictions {
-            let minSize = CGSize(width: min(960, visible.width), height: min(640, visible.height))
-            restrictions.minimumSize = minSize
-            restrictions.maximumSize = CGSize(width: max(visible.width, minSize.width), height: max(visible.height, minSize.height))
+            restrictions.minimumSize = systemFrame.size
+            restrictions.maximumSize = CGSize(width: max(systemFrame.width, 8000), height: max(systemFrame.height, 8000))
         }
-        let systemY = (cocoaFrame.origin.y + cocoaFrame.height) - (visible.origin.y + visible.height)
-        let systemFrame = CGRect(
-            x: visible.origin.x - cocoaFrame.origin.x,
-            y: systemY,
-            width: visible.width,
-            height: visible.height
-        )
-        let preferences = UIWindowScene.GeometryPreferences.Mac()
-        preferences.systemFrame = systemFrame
-        windowScene.requestGeometryUpdate(preferences) { _ in }
-    }
-
-    private static func loadAppKit() {
-        _ = dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_LAZY)
-    }
-
-    private static func classObject(_ name: String) -> NSObject? {
-        guard let metatype = NSClassFromString(name) else { return nil }
-        return unsafeBitCast(metatype, to: NSObject.self)
-    }
-
-    private static func primaryScreen() -> NSObject? {
-        guard let screenClass = classObject("NSScreen") else { return nil }
-        let selector = NSSelectorFromString("screens")
-        guard screenClass.responds(to: selector),
-              let unmanaged = screenClass.perform(selector) else { return nil }
-        let screens = unmanaged.takeUnretainedValue() as? [NSObject]
-        return screens?.first
-    }
-
-    private static func macWindows() -> [NSObject] {
-        guard let appClass = classObject("NSApplication") else { return [] }
-        let sharedSelector = NSSelectorFromString("sharedApplication")
-        guard appClass.responds(to: sharedSelector),
-              let app = appClass.perform(sharedSelector)?.takeUnretainedValue() as? NSObject else { return [] }
-        var found: [NSObject] = []
-        if let key = app.perform(NSSelectorFromString("keyWindow"))?.takeUnretainedValue() as? NSObject {
-            found.append(key)
+        if #available(iOS 16.0, *) {
+            geuttaeRequestSystemFrame(windowScene, systemFrame.origin.x, systemFrame.origin.y, systemFrame.width, systemFrame.height)
         }
-        if let windows = app.perform(NSSelectorFromString("windows"))?.takeUnretainedValue() as? [NSObject] {
-            for window in windows where !found.contains(where: { $0 === window }) {
-                found.append(window)
-            }
-        }
-        return found
-    }
-
-    private static func cocoaRect(_ object: NSObject, _ selectorName: String) -> CGRect {
-        let pointer = Unmanaged.passUnretained(object).toOpaque()
-        return selectorName.withCString { geuttaeCocoaRect(pointer, $0) }
-    }
-
-    private static func setCocoaFrame(_ window: NSObject, _ frame: CGRect) {
-        guard window.responds(to: NSSelectorFromString("setFrame:display:")) else { return }
-        let pointer = Unmanaged.passUnretained(window).toOpaque()
-        geuttaeSetCocoaFrame(pointer, frame)
+        geuttaeApplyVisibleFrame()
     }
 }
 
