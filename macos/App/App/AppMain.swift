@@ -7,7 +7,7 @@ private let appDelegate = AppDelegate()
 /// 로그인 주소는 웹사이트와 같습니다. file 주소에서는 Firebase 로그인이 막힙니다.
 private let site = URL(string: "https://anyplan75.github.io/photo_hint/")!
 
-/// 맥의 큰 창에서 웹사이트를 엽니다. 큰 화면 배치와 2D/3D 전환은 그 페이지에 있습니다.
+/// 맥에서 웹사이트를 엽니다. 창은 보이는 화면을 끝까지 채우고, 페이지 배치는 그 주소에 있습니다.
 @main
 enum AppMain {
     static func main() {
@@ -24,18 +24,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let width = min(1440, max(960, screen.width * 0.92))
-        let height = min(900, max(640, screen.height * 0.9))
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+            contentRect: screen,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "여기야 여기"
         window.minSize = NSSize(width: 960, height: 640)
-        window.setFrameAutosaveName("GeuttaeMainWindow")
         window.backgroundColor = NSColor(srgbRed: 16 / 255, green: 20 / 255, blue: 28 / 255, alpha: 1)
+        // 메뉴 막대와 독 사이의 보이는 화면을 가로·세로로 끝까지 채웁니다.
+        // 예전 이름에 저장된 1440×900 창은 다시 열지 않습니다.
+        window.setFrame(screen, display: true)
+        window.setFrameAutosaveName("GeuttaeMainWindowFill")
 
         let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         web.navigationDelegate = self
@@ -52,7 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
         web.load(URLRequest(url: site))
 
-        window.center()
         window.makeKeyAndOrderFront(nil)
         if #available(macOS 14.0, *) {
             NSApp.activate()
