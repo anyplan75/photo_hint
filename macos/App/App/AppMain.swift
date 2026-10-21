@@ -11,6 +11,17 @@ private let site = URL(string: "https://anyplan75.github.io/photo_hint/")!
 @main
 enum AppMain {
     static func main() {
+        let defaults = UserDefaults.standard
+        // 사용자가 직접 열 때도 예전 창 크기를 복원하지 않습니다.
+        defaults.set(true, forKey: "ApplePersistenceIgnoreState")
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("NSWindow Frame") {
+            defaults.removeObject(forKey: key)
+        }
+        defaults.synchronize()
+        let saved = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Saved Application State", isDirectory: true)
+        try? FileManager.default.removeItem(at: saved)
+
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         app.delegate = appDelegate
@@ -18,9 +29,36 @@ enum AppMain {
     }
 }
 
+/// 웹 화면을 창 내용의 네 변에 붙입니다. 자동 레이아웃은 쓰지 않습니다.
+final class EdgePinnedWebHost: NSView {
+    let webView: WKWebView
+
+    init(webView: WKWebView) {
+        self.webView = webView
+        super.init(frame: .zero)
+        autoresizesSubviews = true
+        webView.autoresizingMask = [.width, .height]
+        addSubview(webView)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func layout() {
+        super.layout()
+        webView.frame = bounds
+    }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        webView.frame = bounds
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate {
     private var window: NSWindow?
     private var webView: WKWebView?
+    private var applyingFrame = false
+    private var userResized = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let window = NSWindow(
@@ -34,14 +72,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let pageColor = NSColor(srgbRed: 8 / 255, green: 18 / 255, blue: 23 / 255, alpha: 1)
         window.backgroundColor = pageColor
         window.delegate = self
-        // 예전에 저장한 좁은 창 크기를 다시 열지 않습니다.
         window.isRestorable = false
+        window.setFrameAutosaveName("")
 
         let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         web.navigationDelegate = self
         web.underPageBackgroundColor = pageColor
-        // 웹 화면이 창 내용 자체입니다. 하위 뷰로 두면 넓은 창 한가운데에 좁은 칸만 남습니다.
-        window.contentView = web
+        let host = EdgePinnedWebHost(webView: web)
+        host.wantsLayer = true
+        host.layer?.backgroundColor = pageColor.cgColor
+        window.contentView = host
         web.load(URLRequest(url: site))
 
         self.window = window
@@ -54,22 +94,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         } else {
             NSApp.activate(ignoringOtherApps: true)
         }
-        // 시스템이 창을 띄운 뒤에 크기를 되돌리는 경우가 있어 한 번 더 맞춥니다.
-        DispatchQueue.main.async { [weak self] in
-            guard let window = self?.window else { return }
-            self?.fillVisibleScreen(window)
+        // 복원이나 웹 화면이 창을 줄이면, 사용자가 직접 크기 조절하기 전에 다시 펼칩니다.
+        for delay in [0.0, 0.3, 1.0, 2.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, let window = self.window, !self.userResized else { return }
+                self.fillVisibleScreen(window)
+            }
         }
     }
 
-    /// 지금 포인터가 있는 화면에서, 메뉴 막대와 독 사이의 보이는 영역을 창으로 채웁니다.
+    func applicationWillTerminate(_ notification: Notification) {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("NSWindow Frame") {
+            defaults.removeObject(forKey: key)
+        }
+        defaults.synchronize()
+    }
+
+    private func sameFrame(_ a: NSRect, _ b: NSRect) -> Bool {
+        abs(a.origin.x - b.origin.x) < 2
+            && abs(a.origin.y - b.origin.y) < 2
+            && abs(a.size.width - b.size.width) < 2
+            && abs(a.size.height - b.size.height) < 2
+    }
+
+    /// 창이 올라간 화면에서, 메뉴 막대와 독 사이의 보이는 영역을 채웁니다.
     private func fillVisibleScreen(_ window: NSWindow) {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) }
-            ?? window.screen
-            ?? NSScreen.main
-            ?? NSScreen.screens.first
+        let screen = window.screen ?? NSScreen.main ?? NSScreen.screens.first
         guard let visible = screen?.visibleFrame else { return }
+        guard !sameFrame(window.frame, visible) else { return }
+        applyingFrame = true
         window.setFrame(visible, display: true)
+        applyingFrame = false
+        if let host = window.contentView {
+            webView?.frame = host.bounds
+        }
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        guard !applyingFrame, !userResized, let window, !window.inLiveResize else { return }
+        fillVisibleScreen(window)
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        userResized = true
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard let window, !userResized else { return }
+        fillVisibleScreen(window)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
