@@ -1,12 +1,50 @@
 import { bearingDegrees, distanceMeters } from './geo';
 
-/** 풀프레임 센서입니다. 가로 36mm, 세로 24mm. */
+/** 풀프레임 센서입니다. 가로 36mm, 세로 24mm. 다른 센서를 고르면 그 가로·세로를 씁니다. */
 export const SENSOR_WIDTH_MM = 36;
 export const SENSOR_HEIGHT_MM = 24;
 export const LENS_PRESETS = [24, 35, 50, 85, 135, 200] as const;
-/** 프레임에 겹쳐 그리는 초점거리입니다. 화면은 가장 넓은 24mm를 담습니다. */
+/** 프레임에 겹쳐 그리는 초점거리입니다. 화면은 켠 것 중 가장 넓은 화각입니다. */
 export const FRAME_FOCALS = [24, 35, 50, 70, 85, 125, 200, 300, 400, 600] as const;
+/** 화각선을 모두 껐을 때 쓰는 화면입니다. */
 export const VIEW_FOCAL_MM = 24;
+
+export type SensorId = 'full' | 'apsc' | 'canon' | 'm43' | 'inch';
+
+/** 센서 크기입니다. 화각은 적힌 가로·세로(mm)로 구하고, 환산은 배율만 곱합니다. */
+export interface CameraSensor {
+  id: SensorId;
+  name: string;
+  widthMm: number;
+  heightMm: number;
+  crop: number;
+}
+
+export const CAMERA_SENSORS: readonly CameraSensor[] = [
+  { id: 'full', name: '풀프레임', widthMm: 36, heightMm: 24, crop: 1 },
+  { id: 'apsc', name: 'APS-C', widthMm: 23.5, heightMm: 15.6, crop: 1.5 },
+  { id: 'canon', name: '캐논 APS-C', widthMm: 22.3, heightMm: 14.9, crop: 1.6 },
+  { id: 'm43', name: '마이크로포서드', widthMm: 17.3, heightMm: 13, crop: 2 },
+  { id: 'inch', name: '1인치', widthMm: 13.2, heightMm: 8.8, crop: 2.7 },
+];
+
+export function cameraSensor(id: string): CameraSensor {
+  return CAMERA_SENSORS.find((item) => item.id === id) ?? CAMERA_SENSORS[0];
+}
+
+/** 프레임 오른쪽 아래에 적는 짧은 센서 문장입니다. */
+export function formatSensorReadout(sensor: CameraSensor, viewMm: number, hFov: number, vFov: number): string {
+  const equivalent = viewMm * sensor.crop;
+  const eq = Math.abs(equivalent - Math.round(equivalent)) < 0.05 ? String(Math.round(equivalent)) : equivalent.toFixed(1);
+  return `${sensor.name} ${sensor.crop.toFixed(1)}× · ${viewMm}mm · 환산 ${eq}mm · 가로 ${hFov.toFixed(2)}° · 세로 ${vFov.toFixed(2)}°`;
+}
+
+/** 켠 초점거리 중 가장 넓은 화각입니다. 없으면 24mm입니다. */
+export function viewFocalMm(enabled: readonly number[]): number {
+  const usable = enabled.filter((mm) => Number.isFinite(mm) && mm > 0);
+  if (usable.length === 0) return VIEW_FOCAL_MM;
+  return Math.min(...usable);
+}
 
 /** 지구 반지름(m). 시선이 땅의 굽음을 얼마나 피하는지 계산할 때 씁니다. */
 const EARTH_RADIUS_M = 6371000;
@@ -94,6 +132,39 @@ export function apparentAltitudeDegrees(distanceM: number, elevationM: number, c
   if (!(distanceM > 0)) return 0;
   const drop = (distanceM * distanceM) / (2 * EARTH_RADIUS_M);
   return Math.atan2(elevationM - cameraAbs - drop, distanceM) * (180 / Math.PI);
+}
+
+export interface SkyBodyRim {
+  azimuth: number;
+  altitude: number;
+}
+
+export interface SkyRim {
+  sun: SkyBodyRim;
+  moon: SkyBodyRim;
+}
+
+/**
+ * 방위가 지도 테두리와 만나는 점입니다.
+ * 방위 0은 북쪽이고, 지도 베어링은 화면 위쪽이 가리키는 나침반 방향입니다.
+ */
+export function rimPoint(
+  azimuthDeg: number,
+  mapBearingDeg: number,
+  width: number,
+  height: number,
+  inset: number,
+): { x: number; y: number } {
+  const relative = ((azimuthDeg - mapBearingDeg) % 360 + 360) % 360;
+  const radians = (relative * Math.PI) / 180;
+  const dx = Math.sin(radians);
+  const dy = -Math.cos(radians);
+  const halfW = Math.max(1, width / 2 - inset);
+  const halfH = Math.max(1, height / 2 - inset);
+  const scaleX = Math.abs(dx) < 1e-6 ? Number.POSITIVE_INFINITY : halfW / Math.abs(dx);
+  const scaleY = Math.abs(dy) < 1e-6 ? Number.POSITIVE_INFINITY : halfH / Math.abs(dy);
+  const scale = Math.min(scaleX, scaleY);
+  return { x: width / 2 + dx * scale, y: height / 2 + dy * scale };
 }
 
 /** 보는 방향에서 대상 방위가 얼마나 왼쪽·오른쪽인지입니다. 오른쪽이 양수입니다. */
@@ -332,12 +403,21 @@ function columnFromSamples(
 
 function viewOffsets(hFovDeg: number): number[] {
   const edge = Math.max(0, hFovDeg / 2);
-  const offsets = new Set<number>([0, -edge, edge]);
-  for (let step = 2; step < edge; step += 2) {
-    offsets.add(-step);
-    offsets.add(step);
+  const step = edge > 20 ? 2 : edge > 8 ? 1 : 0.5;
+  const offsets = new Set<number>([0, roundMilli(-edge), roundMilli(edge)]);
+  const count = Math.floor(edge / step);
+  for (let index = 1; index <= count; index += 1) {
+    const value = roundMilli(step * index);
+    if (value < edge - 1e-6) {
+      offsets.add(-value);
+      offsets.add(value);
+    }
   }
   return [...offsets].sort((a, b) => a - b);
+}
+
+function roundMilli(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 function rayDistances(subjectM: number, reachM: number): number[] {

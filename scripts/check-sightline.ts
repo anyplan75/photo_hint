@@ -15,8 +15,13 @@ import {
   personShape,
   pointFromBearing,
   skylineProbes,
+  CAMERA_SENSORS,
   SENSOR_HEIGHT_MM,
   SENSOR_WIDTH_MM,
+  cameraSensor,
+  formatSensorReadout,
+  rimPoint,
+  viewFocalMm,
 } from '../src/sightline';
 import {
   brightLimbRadians,
@@ -32,7 +37,7 @@ import {
   skyMarks,
   sunDiameterDegrees,
 } from '../src/sky-scene';
-import { dateFromSeoul } from '../src/time';
+import { clockFromMinutes, dateFromSeoul, daysInMonth } from '../src/time';
 
 let failed = false;
 
@@ -238,6 +243,29 @@ assert(assembleSkyline({
   subjectDistanceM: aimDistance,
   subjectHeightDeg: heightDeg,
 }).length === 0, 'missing camera elevation does not invent a skyline');
+
+assert(viewFocalMm([200, 400, 600]) === 200, 'the widest enabled focal sets the view');
+assert(viewFocalMm([24, 200]) === 24, '24mm stays the view when it is on');
+assert(viewFocalMm([]) === 24, 'an empty focal set falls back to 24mm');
+const northRim = rimPoint(0, 0, 200, 100, 0);
+const eastRim = rimPoint(90, 0, 200, 100, 0);
+const eastUp = rimPoint(90, 90, 200, 100, 0);
+assert(Math.abs(northRim.x - 100) < 1e-6 && Math.abs(northRim.y) < 1e-6, 'north sits on the top edge');
+assert(Math.abs(eastRim.x - 200) < 1e-6 && Math.abs(eastRim.y - 50) < 1e-6, 'east sits on the right edge');
+assert(Math.abs(eastUp.x - 100) < 1e-6 && Math.abs(eastUp.y) < 1e-6, 'bearing 90 puts east at the top');
+assert(daysInMonth(2026, 2) === 28 && daysInMonth(2024, 2) === 29, 'February follows the leap year');
+assert(daysInMonth(2026, 10) === 31 && daysInMonth(2026, 11) === 30, 'October and November keep their lengths');
+assert(clockFromMinutes(15 * 60 + 52) === '15:52', 'minutes become a clock');
+const apsc = cameraSensor('apsc');
+const apscH = fieldOfView(200, apsc.widthMm);
+const apscV = fieldOfView(200, apsc.heightMm);
+assert(Math.abs(apscH - 2 * Math.atan(23.5 / 400) * (180 / Math.PI)) < 1e-9, 'APS-C 200mm horizontal field uses 23.5mm');
+assert(Math.abs(apscV - 2 * Math.atan(15.6 / 400) * (180 / Math.PI)) < 1e-9, 'APS-C 200mm vertical field uses 15.6mm');
+assert(Math.abs(fieldOfView(200, SENSOR_WIDTH_MM) - 2 * Math.atan(18 / 200) * (180 / Math.PI)) < 1e-9, 'full-frame 200mm stays 36mm wide');
+assert(apsc.crop === 1.5 && Math.round(200 * apsc.crop) === 300, 'APS-C equivalent is 300mm');
+assert(formatSensorReadout(apsc, 200, apscH, apscV).includes('APS-C 1.5×') && formatSensorReadout(apsc, 200, apscH, apscV).includes('환산 300mm'), 'the readout names the crop');
+assert(CAMERA_SENSORS.length === 5, 'five sensor sizes');
+assert(Math.abs(fieldOfView(viewFocalMm([]), apsc.widthMm) - fieldOfView(24, apsc.widthMm)) < 1e-9, 'all-off still uses 24mm on the chosen sensor');
 
 if (failed) {
   console.error('\nsightline check failed');

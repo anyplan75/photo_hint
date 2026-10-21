@@ -6,7 +6,7 @@ import { AiStatus } from './AiStatus';
 import { GuidePanel } from './GuidePanel';
 import { PublicNotes } from './PublicNotes';
 import { MyPlaces } from './MyPlaces';
-import { emptyRoad, type RoadOverlay } from './map-tools';
+import { emptyRoad, type AddressHit, type RoadOverlay } from './map-tools';
 import { RankList } from './RankList';
 import { RoadTools } from './RoadTools';
 import { ReferenceBook } from './ReferenceBook';
@@ -24,7 +24,7 @@ import { useSession } from './session';
 import { SettingsScreen } from './SettingsScreen';
 import { ShootMap, type SelectionView } from './ShootMap';
 import { SightlineTool, type SightChoice } from './SightlineTool';
-import type { SightPlace } from './sightline';
+import type { SightPlace, SkyRim } from './sightline';
 import type { ShootPoint } from './shoot-points';
 import { parseReferenceAddress, referenceKey } from './sources';
 import {
@@ -59,6 +59,8 @@ export function App() {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [road, setRoad] = useState<RoadOverlay>(emptyRoad);
+  const [addressHit, setAddressHit] = useState<AddressHit | null>(null);
+  const [skyRim, setSkyRim] = useState<SkyRim | null>(null);
   const [photographer, setPhotographer] = useState<SightPlace | null>(null);
   const [subjectPlace, setSubjectPlace] = useState<SightPlace | null>(null);
   const [placing, setPlacing] = useState<'photographer' | 'subject' | null>(null);
@@ -424,6 +426,8 @@ export function App() {
                   addPoint: sync.addPoint,
                   removePoint: sync.removePoint,
                 }}
+                rim={skyRim}
+                onAddress={setAddressHit}
               />
             </div>
             <div className="field-list">
@@ -442,8 +446,9 @@ export function App() {
                 }}
                 onPlacing={setPlacing}
                 onRidge={setRidge}
+                onRim={setSkyRim}
               />
-              <RoadTools center={center} onChange={setRoad} />
+              <RoadTools center={center} address={addressHit} onChange={setRoad} />
               <AiStatus places={ranked} usingHere={useMyLocation} />
               <form className="field-controls" onSubmit={findPlaces}>
                 <div className="control-search">

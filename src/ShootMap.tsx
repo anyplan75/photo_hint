@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { rimPoint, type SkyRim } from './sightline';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { shootingGuide, type GuideBlock } from './guide';
 import { mapboxPublicToken } from './mapbox-token';
-import type { RoadOverlay } from './map-tools';
+import { forwardAddress, type AddressHit, type RoadOverlay } from './map-tools';
 import { reverseAddress } from './search';
 import type { WindowKind } from './places';
 import { recommendTime, sunPlan } from './recommend';
@@ -57,6 +58,8 @@ export function ShootMap({
   road = null,
   sight = null,
   onPlaceSight,
+  rim = null,
+  onAddress,
 }: {
   region: string;
   center: { lat: number; lng: number } | null;
@@ -97,9 +100,14 @@ export function ShootMap({
     placing: 'photographer' | 'subject' | null;
   } | null;
   onPlaceSight?: (lat: number, lng: number) => void;
+  /** 해와 달의 방위입니다. 지도 테두리에 둡니다. */
+  rim?: SkyRim | null;
+  /** 지도 왼쪽 위 주소 검색이 고른 위치입니다. */
+  onAddress?: (hit: AddressHit) => void;
 }) {
   const token = mapboxPublicToken();
   const canvas = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const roadMarkersRef = useRef<mapboxgl.Marker[]>([]);
@@ -117,10 +125,12 @@ export function ShootMap({
   onDragRef.current = onDrag;
   const onPlaceSightRef = useRef(onPlaceSight);
   onPlaceSightRef.current = onPlaceSight;
+  const onAddressRef = useRef(onAddress);
+  onAddressRef.current = onAddress;
   const placingRef = useRef(sight?.placing ?? null);
   placingRef.current = sight?.placing ?? null;
   const sightMarkersRef = useRef<mapboxgl.Marker[]>([]);
-  const [draft, setDraft] = useState<{ lat: number; lng: number } | null>(null);
+  const [draft, setDraft] = useState<{ lat: number; lng: number; x: number; y: number } | null>(null);
   const [name, setName] = useState('');
   const [pointError, setPointError] = useState<string | null>(null);
   const [selected, setSelected] = useState<PinSelection | null>(null);
@@ -138,12 +148,24 @@ export function ShootMap({
     }, 0);
   }
   const [pointAddress, setPointAddress] = useState<{ id: string; text: string | null } | null>(null);
+  const [mapBearing, setMapBearing] = useState(0);
+  const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
   const [view, setView] = useState<MapView>('2d');
   const [pitch, setPitch] = useState(0);
   const sightFitRef = useRef('');
   const viewRef = useRef<MapView>('2d');
   const viewReady = useRef(false);
   viewRef.current = view;
+
+  useEffect(() => {
+    const element = frameRef.current;
+    if (!element) return;
+    const measure = () => setFrameSize({ width: element.clientWidth, height: element.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [token]);
 
   useEffect(() => {
     setDraft(null);
@@ -202,6 +224,9 @@ export function ShootMap({
     });
     map.addControl(new mapboxgl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
     map.on('pitch', () => setPitch(Math.round(map.getPitch())));
+    const rememberBearing = () => setMapBearing(map.getBearing());
+    map.on('rotate', rememberBearing);
+    map.on('load', rememberBearing);
     map.on('dragend', () => {
       const next = map.getCenter();
       onDragRef.current?.(next.lat, next.lng);
@@ -212,15 +237,19 @@ export function ShootMap({
         ignoreMapClick.current = false;
         return;
       }
-      if (target instanceof Element && target.closest('.map-pin, .map-info')) return;
-      if (placingRef.current) {
-        onPlaceSightRef.current?.(event.lngLat.lat, event.lngLat.lng);
-        return;
-      }
-      setSelected(null);
-      setDraft({ lat: event.lngLat.lat, lng: event.lngLat.lng });
-      setName('');
+      if (target instanceof Element && target.closest('.map-pin, .map-info, .map-search, .point-save')) return;
+      if (placingRef.current) onPlaceSightRef.current?.(event.lngLat.lat, event.lngLat.lng);
     });
+    map.on('contextmenu', (event) => {
+      event.preventDefault();
+      const target = event.originalEvent.target;
+      if (target instanceof Element && target.closest('.map-pin, .map-info, .map-search, .point-save')) return;
+      setDraft({ lat: event.lngLat.lat, lng: event.lngLat.lng, x: event.point.x, y: event.point.y });
+      setName('');
+      setPointError(null);
+    });
+    const blockMenu = (event: Event) => event.preventDefault();
+    map.getCanvas().addEventListener('contextmenu', blockMenu);
     mapRef.current = map;
     viewReady.current = false;
     const observer = new ResizeObserver(() => map.resize());
@@ -233,6 +262,7 @@ export function ShootMap({
       markersRef.current = [];
       sightMarkersRef.current.forEach((marker) => marker.remove());
       sightMarkersRef.current = [];
+      map.getCanvas().removeEventListener('contextmenu', blockMenu);
       map.remove();
       mapRef.current = null;
     };
@@ -479,14 +509,50 @@ export function ShootMap({
       data-route-count={road?.route?.length ?? 0}
       data-placing={sight?.placing ?? ''}
       data-sight-line={sight?.photographer && sight?.subject ? 'on' : 'off'}
+      data-saved-count={points.length}
+      data-point-draft={draft ? 'open' : 'closed'}
     >
       <h2 id="map-title" className="sr">
         지도
       </h2>
       {token ? (
         <>
-          <div className="map-frame">
+          <div className="map-frame" ref={frameRef}>
             <div ref={canvas} className="map-canvas" data-map-canvas data-terrain={view === '3d' ? 'on' : 'off'} />
+            {rim && frameSize.width > 0 ? <MapRim rim={rim} bearing={mapBearing} width={frameSize.width} height={frameSize.height} /> : null}
+            <MapAddressSearch center={center} onPick={(hit) => onAddressRef.current?.(hit)} />
+            {draft ? (
+              <form
+                className="point-save"
+                data-point-form
+                style={{ left: clamp(draft.x, frameSize.width, 210), top: clamp(draft.y, frameSize.height, 132) }}
+                onSubmit={savePoint}
+                onMouseDown={(event) => event.stopPropagation()}
+                onContextMenu={(event) => event.preventDefault()}
+              >
+                <p>
+                  {draft.lat.toFixed(5)}, {draft.lng.toFixed(5)}
+                </p>
+                <label className="sr" htmlFor="point-name">
+                  지점 이름
+                </label>
+                <input
+                  id="point-name"
+                  name="point-name"
+                  value={name}
+                  placeholder="촬영 지점 이름"
+                  onChange={(event) => setName(event.target.value)}
+                  autoComplete="off"
+                  required
+                />
+                <button className="ghost slim" type="submit">
+                  저장
+                </button>
+                <button className="ghost slim" type="button" onClick={() => setDraft(null)}>
+                  취소
+                </button>
+              </form>
+            ) : null}
             <div className="view-switch" role="group" aria-label="지도 보기">
               <button type="button" data-view="2d" aria-pressed={view === '2d'} className={view === '2d' ? 'on' : ''} onClick={() => setView('2d')}>
                 2D 평면
@@ -503,28 +569,6 @@ export function ShootMap({
               <span className="map-pin" aria-hidden="true" /> 추천 장소
               <span className="map-pin mine" aria-hidden="true" /> 저장한 지점
             </p>
-          )}
-          {draft && (
-            <form className="search" data-point-form onSubmit={savePoint}>
-              <label className="sr" htmlFor="point-name">
-                지점 이름
-              </label>
-              <input
-                id="point-name"
-                name="point-name"
-                value={name}
-                placeholder="촬영 지점 이름"
-                onChange={(event) => setName(event.target.value)}
-                autoComplete="off"
-                required
-              />
-              <button className="ghost slim" type="submit">
-                저장
-              </button>
-              <button className="ghost slim" type="button" onClick={() => setDraft(null)}>
-                취소
-              </button>
-            </form>
           )}
           {(pointError || syncError) && <p className="note error">{pointError || syncError}</p>}
         </>
@@ -841,5 +885,116 @@ function describeSelection({
       blocks,
     },
   };
+}
+
+function clamp(value: number, span: number, box: number): number {
+  const limit = Math.max(8, span - box);
+  return Math.min(Math.max(8, value), limit);
+}
+
+/** 지도 왼쪽 위에 붙는 짧은 주소 검색입니다. 오른쪽 목록에는 두지 않습니다. */
+function MapAddressSearch({
+  center,
+  onPick,
+}: {
+  center: { lat: number; lng: number } | null;
+  onPick: (hit: AddressHit) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [hits, setHits] = useState<AddressHit[]>([]);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function findAddress(event: FormEvent) {
+    event.preventDefault();
+    const name = query.trim();
+    if (!name) return;
+    const here = center ?? { lat: 33.38, lng: 126.55 };
+    const controller = new AbortController();
+    setBusy(true);
+    setNote('주소를 찾는 중');
+    try {
+      const found = await forwardAddress(name, here.lat, here.lng, controller.signal);
+      setHits(found);
+      if (found[0]) {
+        onPick(found[0]);
+        setNote(found[0].label);
+      } else {
+        setNote('그 주소를 찾지 못했습니다.');
+      }
+    } catch {
+      setHits([]);
+      setNote('주소를 찾지 못했습니다. 잠시 뒤 다시 시도하세요.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="map-search" data-map-search onSubmit={findAddress} onContextMenu={(event) => event.preventDefault()}>
+      <label className="sr" htmlFor="map-address-query">
+        주소
+      </label>
+      <input
+        id="map-address-query"
+        name="address"
+        data-map-search-input
+        value={query}
+        placeholder="주소"
+        onChange={(event) => setQuery(event.target.value)}
+        autoComplete="off"
+      />
+      <button className="field-btn sea" type="submit" data-map-search-find disabled={busy}>
+        찾기
+      </button>
+      {hits.length > 0 && (
+        <div className="map-search-hits" data-map-search-hits>
+          {hits.map((hit) => (
+            <button key={hit.id} type="button" onClick={() => onPick(hit)}>
+              {hit.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {note ? <p data-address-note>{note}</p> : null}
+    </form>
+  );
+}
+
+/** 해와 달을 지도 테두리의 실제 방위에 둡니다. 지평선 아래면 흐리게 적습니다. */
+function MapRim({ rim, bearing, width, height }: { rim: SkyRim; bearing: number; width: number; height: number }) {
+  const sun = rimPoint(rim.sun.azimuth, bearing, width, height, 20);
+  let moon = rimPoint(rim.moon.azimuth, bearing, width, height, 20);
+  if (Math.hypot(sun.x - moon.x, sun.y - moon.y) < 36) {
+    moon = {
+      x: width / 2 + (moon.x - width / 2) * 0.78,
+      y: height / 2 + (moon.y - height / 2) * 0.78,
+    };
+  }
+  const items = [
+    { kind: 'sun' as const, name: '해', body: rim.sun, point: sun },
+    { kind: 'moon' as const, name: '달', body: rim.moon, point: moon },
+  ];
+  return (
+    <div className="map-rim" data-map-rim data-map-bearing={bearing.toFixed(1)}>
+      {items.map((item) => {
+        const set = item.body.altitude < 0;
+        return (
+          <span
+            key={item.kind}
+            data-rim={item.kind}
+            data-azimuth={item.body.azimuth.toFixed(2)}
+            data-altitude={item.body.altitude.toFixed(2)}
+            data-set={set ? 'yes' : 'no'}
+            style={{ left: item.point.x, top: item.point.y }}
+          >
+            <i className={item.kind === 'sun' ? 'rim-sun' : 'rim-moon'} />
+            {item.name}
+            {set ? ' 짐' : ''}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 

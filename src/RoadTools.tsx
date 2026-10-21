@@ -1,8 +1,7 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { mapboxPublicToken } from './mapbox-token';
 import {
   farFromMap,
-  forwardAddress,
   matchToRoad,
   movedMeters,
   routeBetween,
@@ -12,39 +11,44 @@ import {
   type SnappedPoint,
 } from './map-tools';
 
-/** 주소 검색, 길 맞추기, 경로 안내. 지도 밖 목록 칸에 둡니다. */
+/** 길 맞추기와 경로 안내입니다. 주소 찾기는 지도 왼쪽 위에 둡니다. */
 export function RoadTools({
   center,
+  address,
   onChange,
 }: {
   center: MapPoint;
+  address: AddressHit | null;
   onChange: (overlay: RoadOverlay) => void;
 }) {
   const centerRef = useRef(center);
   centerRef.current = center;
+  const addressRef = useRef(address);
+  addressRef.current = address;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   const frame = useRef(0);
-  const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<AddressHit[]>([]);
-  const [addressNote, setAddressNote] = useState('');
   const [snapNote, setSnapNote] = useState('');
   const [routeNote, setRouteNote] = useState('');
-  const [address, setAddress] = useState<AddressHit | null>(null);
   const [raw, setRaw] = useState<MapPoint | null>(null);
   const [snapped, setSnapped] = useState<SnappedPoint | null>(null);
-  const [busy, setBusy] = useState<'address' | 'snap' | 'route' | null>(null);
+  const [busy, setBusy] = useState<'snap' | 'route' | null>(null);
+  const rawRef = useRef(raw);
+  const snappedRef = useRef(snapped);
+  rawRef.current = raw;
+  snappedRef.current = snapped;
 
   function publish(next: {
-    address?: AddressHit | null;
     raw?: MapPoint | null;
     snapped?: SnappedPoint | null;
     route?: [number, number][] | null;
   }) {
-    const addressPoint = next.address === undefined ? address : next.address;
-    const rawPoint = next.raw === undefined ? raw : next.raw;
-    const snappedPoint = next.snapped === undefined ? snapped : next.snapped;
+    const rawPoint = next.raw === undefined ? rawRef.current : next.raw;
+    const snappedPoint = next.snapped === undefined ? snappedRef.current : next.snapped;
     const route = next.route === undefined ? null : next.route;
+    const addressPoint = addressRef.current;
     frame.current += 1;
-    onChange({
+    onChangeRef.current({
       address: addressPoint ? { lat: addressPoint.lat, lng: addressPoint.lng, label: addressPoint.label } : null,
       raw: rawPoint,
       snapped: snappedPoint ? { lat: snappedPoint.lat, lng: snappedPoint.lng } : null,
@@ -53,38 +57,17 @@ export function RoadTools({
     });
   }
 
-  async function findAddress(event: FormEvent) {
-    event.preventDefault();
-    const name = query.trim();
-    if (!name) return;
-    if (!mapboxPublicToken()) {
-      setAddressNote('지도 암호가 없어 주소를 찾지 못합니다.');
-      setHits([]);
-      return;
-    }
-    const controller = new AbortController();
-    setBusy('address');
-    setAddressNote('주소를 지도 위치로 바꾸는 중');
-    try {
-      const found = await forwardAddress(name, centerRef.current.lat, centerRef.current.lng, controller.signal);
-      setHits(found);
-      setAddressNote(found.length === 0 ? '그 주소를 찾지 못했습니다.' : '');
-    } catch {
-      setHits([]);
-      setAddressNote('주소를 찾지 못했습니다. 잠시 뒤 다시 시도하세요.');
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  function chooseAddress(hit: AddressHit) {
-    setAddress(hit);
-    setHits([]);
-    setQuery(hit.label);
-    setAddressNote(`${hit.label} 위치를 지도에 표시했습니다.`);
+  useEffect(() => {
+    frame.current += 1;
+    onChangeRef.current({
+      address: address ? { lat: address.lat, lng: address.lng, label: address.label } : null,
+      raw: rawRef.current,
+      snapped: snappedRef.current ? { lat: snappedRef.current.lat, lng: snappedRef.current.lng } : null,
+      route: null,
+      frame: frame.current,
+    });
     setRouteNote('');
-    publish({ address: hit, route: null });
-  }
+  }, [address]);
 
   async function snapPoint() {
     if (!mapboxPublicToken()) {
@@ -157,36 +140,6 @@ export function RoadTools({
 
   return (
     <section className="road-tools" data-road-tools aria-label="길 도구">
-      <form onSubmit={findAddress}>
-        <h3>주소 검색</h3>
-        <p>식당과 숙소 주소를 지도 위치로 바꿉니다.</p>
-        <div className="control-search">
-          <label className="sr" htmlFor="address-query">
-            주소 검색
-          </label>
-          <input
-            id="address-query"
-            name="address"
-            value={query}
-            placeholder="식당·숙소 주소"
-            onChange={(event) => setQuery(event.target.value)}
-            autoComplete="off"
-          />
-          <button className="field-btn sea" type="submit" disabled={busy === 'address'}>
-            찾기
-          </button>
-        </div>
-        {hits.length > 0 && (
-          <div className="control-hits">
-            {hits.map((hit) => (
-              <button key={hit.id} type="button" onClick={() => chooseAddress(hit)}>
-                {hit.label}
-              </button>
-            ))}
-          </div>
-        )}
-        {addressNote && <p data-address-note>{addressNote}</p>}
-      </form>
       <div>
         <h3>길 맞추기</h3>
         <p>흔들리는 GPS 점을 길 위에 붙입니다.</p>

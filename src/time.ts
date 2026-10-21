@@ -81,6 +81,18 @@ export function seoulMinutes(date: Date): number {
   return item.hour * 60 + item.minute;
 }
 
+/** 그달의 마지막 날입니다. 윤년 2월은 29일입니다. */
+export function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** 자정부터의 분을 `HH:MM`으로 씁니다. */
+export function clockFromMinutes(minutes: number): string {
+  const hour = Math.floor(minutes / 60) % 24;
+  const minute = ((minutes % 60) + 60) % 60;
+  return `${pad(hour)}:${pad(minute)}`;
+}
+
 /** `YYYY-MM-DD` 와 자정부터의 분을 서울 시각으로 읽습니다. */
 export function dateFromSeoul(date: string, minutes: number): Date {
   const [year, month, day] = date.split('-').map(Number);

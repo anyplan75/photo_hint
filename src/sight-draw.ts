@@ -40,6 +40,8 @@ export function drawLensFrame(
   scene: SkyScene | null,
   skyline: SkylineColumn[] | null,
   focals: number[],
+  sensorWidthMm = SENSOR_WIDTH_MM,
+  sensorHeightMm = SENSOR_HEIGHT_MM,
 ): FrameMetrics {
   const pxPerDeg = hFov > 0 && vFov > 0 ? Math.min(width / hFov, height / vFov) : 1;
   const frameW = hFov * pxPerDeg;
@@ -87,7 +89,7 @@ export function drawLensFrame(
   if (skyline && skyline.length > 1) drawSkyline(ctx, width, height, centerAlt, pxPerDeg, skyline, true);
   ctx.restore();
   drawBrackets(ctx, width, height);
-  drawFocalFrames(ctx, width, height, hFov, vFov, focals);
+  drawFocalFrames(ctx, width, height, hFov, vFov, focals, sensorWidthMm, sensorHeightMm);
   ctx.restore();
   const moonPx = (scene?.moon.diameterDeg ?? 0) * pxPerDeg;
   const sunPx = (scene?.sun.diameterDeg ?? 0) * pxPerDeg;
@@ -286,17 +288,19 @@ function drawFocalFrames(
   hFov: number,
   vFov: number,
   focals: number[],
+  sensorWidthMm: number,
+  sensorHeightMm: number,
 ): void {
   if (!(hFov > 0) || !(vFov > 0)) return;
-  const list = [...focals].sort((a, b) => fieldOfView(b, SENSOR_WIDTH_MM) - fieldOfView(a, SENSOR_WIDTH_MM));
+  const list = [...focals].sort((a, b) => fieldOfView(b, sensorWidthMm) - fieldOfView(a, sensorWidthMm));
   ctx.save();
   ctx.font = '11px "Noto Sans KR", sans-serif';
   ctx.lineWidth = 1;
   ctx.strokeStyle = 'rgba(244, 247, 239, 0.92)';
   ctx.fillStyle = '#f4f7ef';
   for (const mm of list) {
-    const frameW = (fieldOfView(mm, SENSOR_WIDTH_MM) / hFov) * width;
-    const frameH = (fieldOfView(mm, SENSOR_HEIGHT_MM) / vFov) * height;
+    const frameW = (fieldOfView(mm, sensorWidthMm) / hFov) * width;
+    const frameH = (fieldOfView(mm, sensorHeightMm) / vFov) * height;
     const x = (width - frameW) / 2;
     const y = (height - frameH) / 2;
     ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, frameW - 1), Math.max(1, frameH - 1));
